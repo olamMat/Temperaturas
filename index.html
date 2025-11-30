@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <title>Dashboard Secadoras</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+  <!-- Estilos -->
+  <link rel="stylesheet" href="styles.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+</head>
+
+<body>
+<div id="dashboard">
+
+  <header class="topbar">
+    <div>
+      <h1>Dashboard de Temperaturas – Secadoras</h1>
+      <div id="lastUpdated" class="muted">Actualizado: --</div>
+    </div>
+
+    <div class="actions">
+      <button id="toggleTheme" title="Cambiar tema">🌓 Tema</button>
+      <button id="exportPDF" title="Exportar PDF">📄 Exportar PDF</button>
+      <button id="downloadCSV" title="Descargar CSV">⬇️ CSV</button>
+    </div>
+  </header>
+
+  <section class="filters">
+    <div class="filter-row">
+      <div class="filter-item">
+        <label>Rango rápido</label>
+        <select id="quickRange">
+          <option value="1">Última hora</option>
+          <option value="6">Últimas 6 horas</option>
+          <option value="12">Últimas 12 horas</option>
+          <option value="24" selected>Últimas 24h</option>
+          <option value="all">Todo</option>
+        </select>
+      </div>
+      <div class="filter-item">
+        <span class="muted">Los filtros de fecha manual se han simplificado para garantizar datos consistentes.</span>
+      </div>
+    </div>
+  </section>
+
+  <section class="stats">
+    <h2>KPI por Secadora (ventana actual)</h2>
+    <div id="statsCards" class="card-container"></div>
+  </section>
+
+  <section class="heatmap-section">
+    <div class="section-head">
+      <h2>Heatmap (promedio por hora)</h2>
+      <span class="muted">
+        El heatmap muestra el promedio térmico por secadora en cada hora de la ventana seleccionada.
+        Verde = valores bajos, Amarillo = medios, Rojo = altos. Cada columna es una hora.
+      </span>
+    </div>
+    <div id="heatmap"></div>
+  </section>
+
+  <section class="history">
+    <div class="section-head">
+      <h2>Historial (Promedios por Secadora)</h2>
+      <div class="tabs">
+        <button class="tab active" data-tab="daily">Diario</button>
+        <button class="tab" data-tab="weekly">Semanal</button>
+      </div>
+    </div>
+
+    <div id="historyDaily" class="history-table"></div>
+    <div id="historyWeekly" class="history-table hidden"></div>
+  </section>
+
+  <section class="tableSection">
+    <h2>Datos de la ventana — <span id="rowCount"></span></h2>
+    <div class="table-wrapper">
+      <table>
+        <thead id="tableHead"></thead>
+        <tbody id="tableBody"></tbody>
+      </table>
+    </div>
+  </section>
+
+</div>
+
+<!-- libs para exportar PDF -->
+<script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
+
+<!-- App -->
+<script src="app.js"></script>
+</body>
+</html>
