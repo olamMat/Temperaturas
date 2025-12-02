@@ -16,7 +16,6 @@ let secadoras = [];
   if (saved){
     document.documentElement.setAttribute("data-theme", saved);
   } else {
-    // respetar preferencia del sistema
     if (window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches){
       document.documentElement.setAttribute("data-theme", "light");
     }
@@ -73,7 +72,7 @@ function stats(vals) {
 }
 
 /* ===============================
-   TARJETAS KPI (colores + iconos)
+   TARJETAS KPI (ignorando 0 SOLO EN PROMEDIO)
 ================================*/
 function renderCards() {
   const wrap = document.getElementById("statsCards");
@@ -96,12 +95,17 @@ function renderCards() {
       const val = parseFloat(r[sec]);
       if (!isFinite(val)) return;
 
+      // Última lectura (NO ignorar 0)
       if (!lastValue || ts > lastValueTime) {
         lastValue = val;
         lastValueTime = ts;
       }
 
-      if (ts >= since24) values24.push(val);
+      // Máximo y mínimo (NO ignorar 0)
+      // PERO en promedio: ignorar solo si es 0
+      if (ts >= since24) {
+        if (val !== 0) values24.push(val);  // SOLO AQUÍ SE IGNORA EL CERO
+      }
 
       const ts1h = new Date(lastTs.getTime() - 3600000);
       if (ts <= ts1h) value1hAgo = val;
@@ -167,7 +171,7 @@ function renderCards() {
 }
 
 /* ===============================
-   HEATMAP (con explicación)
+   HEATMAP (sin ignorar 0)
 ================================*/
 function renderHeatmap() {
   const wrap = document.getElementById("heatmap");
@@ -196,7 +200,8 @@ function renderHeatmap() {
 
     secadoras.forEach((sec)=>{
       const v = parseFloat(r[sec]);
-      if (!isFinite(v)) return;
+      if (!isFinite(v)) return;  // NO ignorar 0 aquí
+
       buckets[sec] ??= {};
       buckets[sec][hk] ??= [];
       buckets[sec][hk].push(v);
@@ -216,10 +221,10 @@ function renderHeatmap() {
     return `rgb(${r},${g},50)`;
   };
 
-  // 24 columnas (horas)
   const hours = [];
   const base = new Date(); base.setMinutes(0,0,0);
-  for (let i=hoursWindow-1; i>=0; i--) hours.push(new Date(base.getTime() - i*3600000).getTime());
+  for (let i=hoursWindow-1; i>=0; i--) 
+    hours.push(new Date(base.getTime() - i*3600000).getTime());
 
   secadoras.forEach((sec)=>{
     const row = document.createElement("div");
@@ -244,15 +249,13 @@ function renderHeatmap() {
 }
 
 /* ===============================
-   HISTORIAL (Diario y Semanal)
+   HISTORIAL
 ================================*/
 function groupByDayWeek(rows) {
-  // retorna { daily: Map(dayStr -> {sec-> [vals]}), weekly: Map(weekStr -> {sec->[vals]}) }
   const daily = new Map();
   const weekly = new Map();
 
   function weekKey(d){
-    // Año-ISOWeek (simple): año + "W" + semana aproximada
     const firstJan = new Date(d.getFullYear(),0,1);
     const offset = Math.floor((d - firstJan)/86400000);
     const week = Math.floor((offset + firstJan.getDay()+6)/7) + 1;
@@ -262,6 +265,7 @@ function groupByDayWeek(rows) {
   rows.forEach(r=>{
     const ts = parseDotNetDate(r["Time_Stamp"]);
     if (!ts) return;
+
     const day = `${ts.getFullYear()}-${String(ts.getMonth()+1).padStart(2,'0')}-${String(ts.getDate()).padStart(2,'0')}`;
     const wk = weekKey(ts);
 
@@ -270,7 +274,8 @@ function groupByDayWeek(rows) {
 
     secadoras.forEach(sec=>{
       const v = parseFloat(r[sec]);
-      if (!isFinite(v)) return;
+      if (!isFinite(v)) return;  // NO ignorar 0 aquí
+
       (daily.get(day)[sec] ||= []).push(v);
       (weekly.get(wk)[sec] ||= []).push(v);
     });
@@ -289,7 +294,7 @@ function renderHistoryTables() {
       container.innerHTML = `<div class="muted">Sin datos ${label}.</div>`;
       return;
     }
-    // header: Periodo + secadoras
+
     const header = `<tr><th>${label}</th>${secadoras.map(s=>`<th>${s}</th>`).join("")}</tr>`;
     const body = [...map.keys()].sort().map(key=>{
       const obj = map.get(key);
@@ -316,7 +321,7 @@ function renderHistoryTables() {
 }
 
 /* ===============================
-   TABLA DE DATOS
+   TABLA ORIGINAL
 ================================*/
 function renderTable() {
   const rows = getQuickRows();
@@ -349,7 +354,7 @@ function renderTable() {
 }
 
 /* ===============================
-   EXPORTAR CSV / PDF
+   EXPORT CSV / PDF
 ================================*/
 function downloadCSVCurrentFilter() {
   const rows = getQuickRows();
@@ -373,6 +378,9 @@ function downloadCSVCurrentFilter() {
   URL.revokeObjectURL(a.href);
 }
 
+/* ===============================
+   PDF EXPORT
+================================*/
 async function exportPDF() {
   const { jsPDF } = window.jspdf;
   const dashboard = document.getElementById("dashboard");
@@ -384,30 +392,35 @@ async function exportPDF() {
   const pageWidth = pdf.internal.pageSize.getWidth();
   const pageHeight = pdf.internal.pageSize.getHeight();
 
-  const imgWidth = pageWidth - 10; // margen
+  const imgWidth = pageWidth - 10;
   const imgHeight = canvas.height * imgWidth / canvas.width;
 
-  let y = 5;
   if (imgHeight < pageHeight){
-    pdf.addImage(imgData, "PNG", 5, y, imgWidth, imgHeight);
+    pdf.addImage(imgData, "PNG", 5, 5, imgWidth, imgHeight);
   } else {
-    // multipágina
     let position = 0;
-    const pageCanvas = document.createElement("canvas");
-    const pageCtx = pageCanvas.getContext("2d");
     const ratio = canvas.width / imgWidth;
-    const pageImgHeight = pageHeight * ratio;
+    const chunkHeight = pageHeight * ratio;
 
-    for (let page = 0; position < canvas.height; page++){
-      pageCanvas.width = canvas.width;
-      pageCanvas.height = Math.min(pageImgHeight, canvas.height - position);
-      pageCtx.fillStyle = "#ffffff"; pageCtx.fillRect(0,0,pageCanvas.width,pageCanvas.height);
-      pageCtx.drawImage(canvas, 0, position, pageCanvas.width, pageCanvas.height,
-                               0, 0, pageCanvas.width, pageCanvas.height);
-      const pageData = pageCanvas.toDataURL("image/png");
-      if (page>0) pdf.addPage();
-      pdf.addImage(pageData, "PNG", 5, 5, imgWidth, (pageCanvas.height / ratio));
-      position += pageImgHeight;
+    while (position < canvas.height){
+      const chunkCanvas = document.createElement("canvas");
+      const cCtx = chunkCanvas.getContext("2d");
+
+      chunkCanvas.width = canvas.width;
+      chunkCanvas.height = Math.min(chunkHeight, canvas.height - position);
+
+      cCtx.drawImage(
+        canvas,
+        0, position, chunkCanvas.width, chunkCanvas.height,
+        0, 0, chunkCanvas.width, chunkCanvas.height
+      );
+
+      const chunkData = chunkCanvas.toDataURL("image/png");
+
+      pdf.addImage(chunkData, "PNG", 5, 5, imgWidth, chunkCanvas.height / ratio);
+
+      position += chunkHeight;
+      if (position < canvas.height) pdf.addPage();
     }
   }
 
@@ -457,7 +470,6 @@ document.addEventListener("DOMContentLoaded", () => {
   document.getElementById("downloadCSV").onclick = downloadCSVCurrentFilter;
   document.getElementById("exportPDF").onclick = exportPDF;
 
-  // Tabs historial
   document.querySelectorAll(".tab").forEach(btn=>{
     btn.addEventListener("click", ()=>{
       document.querySelectorAll(".tab").forEach(b=>b.classList.remove("active"));
@@ -468,6 +480,5 @@ document.addEventListener("DOMContentLoaded", () => {
     });
   });
 
-  // Auto refresh cada 5 min
   setInterval(init, 5 * 60 * 1000);
 });
