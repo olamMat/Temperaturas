@@ -3,22 +3,16 @@
 <head>
   <meta charset="UTF-8" />
   <title>Dashboard Secadoras</title>
-
-<link rel="icon" href="data:image/svg+xml,
+  <link rel="icon" href="data:image/svg+xml,
 <svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'>
 <text y='.9em' font-size='90'>🌡️</text>
 </svg>">
-
-  
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-
-  <!-- Estilos -->
-  <link rel="stylesheet" href="styles.css">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
 </head>
-
 <body>
 <div id="dashboard">
 
@@ -27,7 +21,6 @@
       <h1>Dashboard de Temperaturas – Secadoras</h1>
       <div id="lastUpdated" class="muted">Actualizado: --</div>
     </div>
-
     <div class="actions">
       <button id="toggleTheme" title="Cambiar tema">🌓 Tema</button>
       <button id="exportPDF" title="Exportar PDF">📄 Exportar PDF</button>
@@ -48,7 +41,7 @@
         </select>
       </div>
       <div class="filter-item">
-        <span class="muted">Los filtros de fecha manual se han simplificado para garantizar datos consistentes.</span>
+        <span class="muted">KPI: el promedio ignora valores 0. Heatmap y línea incluyen 0.</span>
       </div>
     </div>
   </section>
@@ -58,15 +51,47 @@
     <div id="statsCards" class="card-container"></div>
   </section>
 
+  <section class="timeline">
+    <div class="section-head">
+      <h2>Línea de tiempo</h2>
+      <span class="muted">Seleccioná la secadora y rango. La línea está animada y cada punto muestra detalles.</span>
+    </div>
+    <div class="timeline-controls">
+      <label>Secadora:
+        <select id="timelineSecadora"></select>
+      </label>
+      <label>Rango:
+        <select id="timelineRange">
+          <option value="1">Última hora</option>
+          <option value="6">Últimas 6 horas</option>
+          <option value="12">Últimas 12 horas</option>
+          <option value="24" selected>Últimas 24h</option>
+          <option value="all">Todo</option>
+        </select>
+      </label>
+    </div>
+    <div class="timeline-viewport">
+      <svg id="timelineSvg" viewBox="0 0 1100 520" preserveAspectRatio="none" aria-label="Línea de tiempo"></svg>
+    </div>
+  </section>
+
   <section class="heatmap-section">
     <div class="section-head">
       <h2>Heatmap (promedio por hora)</h2>
       <span class="muted">
-        El heatmap muestra el promedio térmico por secadora en cada hora de la ventana seleccionada.
-        Verde = valores bajos, Amarillo = medios, Rojo = altos. Cada columna es una hora.
+        Azul = bajo, Verde = medio, Rojo = alto. Cada columna es una hora de la ventana.
       </span>
     </div>
-    <div id="heatmap"></div>
+
+    <div class="hm-controls">
+      <div class="hm-checks" id="hmCheckboxes"></div>
+      <div class="hm-buttons">
+        <button id="hmSelectAll">Seleccionar todas</button>
+        <button id="hmClearAll">Limpiar</button>
+      </div>
+    </div>
+
+    <div id="heatmap" class="hm-grid"></div>
   </section>
 
   <section class="history">
@@ -102,4 +127,3 @@
 <script src="app.js"></script>
 </body>
 </html>
-
