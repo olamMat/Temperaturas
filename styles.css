@@ -142,3 +142,24 @@ th{ position:sticky; top:0; background:var(--card); z-index:5; }
   :root{ --label-w: 130px; --cell-w: 40px; }
   .timeline-viewport{ height: 480px; }
 }
+.heatmap-fast-filter {
+  padding: 12px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.heatmap-fast-filter label {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.heatmap-fast-filter select {
+  background: var(--card);
+  color: var(--text);
+  border: none;
+  border-radius: 10px;
+  padding: 8px 10px;
+  width: 180px;
+}
