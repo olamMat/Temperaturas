@@ -32,13 +32,7 @@
     <div class="filter-row">
       <div class="filter-item">
         <label>Rango rápido</label>
-        <select id="quickRange">
-          <option value="1">Última hora</option>
-          <option value="6">Últimas 6 horas</option>
-          <option value="12">Últimas 12 horas</option>
-          <option value="24" selected>Últimas 24h</option>
-          <option value="all">Todo</option>
-        </select>
+        <select id="quickRange"><option value="1">Última hora</option><option value="3">Últimas 3 horas</option><option value="6">Últimas 6 horas</option><option value="12">Últimas 12 horas</option><option value="24" selected>Últimas 24h</option></select>
       </div>
       <div class="filter-item">
         <span class="muted">KPI: el promedio ignora valores 0. Heatmap y línea incluyen 0.</span>
@@ -57,17 +51,18 @@
       <span class="muted">Seleccioná la secadora y rango. La línea está animada y cada punto muestra detalles.</span>
     </div>
     <div class="timeline-controls">
-      <label>Secadora:
-        <select id="timelineSecadora"></select>
-      </label>
+      <div class="timeline-multi">
+  <div class="tm-head">
+    <strong>Secadoras:</strong>
+    <div class="tm-actions">
+      <button id="tmSelectAll" type="button">Ver 18</button>
+      <button id="tmClearAll" type="button">Limpiar</button>
+    </div>
+  </div>
+  <div id="timelineChecks" class="tm-checks"></div>
+</div>
       <label>Rango:
-        <select id="timelineRange">
-          <option value="1">Última hora</option>
-          <option value="6">Últimas 6 horas</option>
-          <option value="12">Últimas 12 horas</option>
-          <option value="24" selected>Últimas 24h</option>
-          <option value="all">Todo</option>
-        </select>
+        <select id="timelineRange"><option value="1">Última hora</option><option value="3">Últimas 3 horas</option><option value="6">Últimas 6 horas</option><option value="12">Últimas 12 horas</option><option value="24" selected>Últimas 24h</option></select>
       </label>
     </div>
     <div class="timeline-viewport">
@@ -84,14 +79,7 @@
     </div>
 <div class="heatmap-fast-filter">
   <label>Rango rápido (solo Heatmap)</label>
-  <select id="heatmapQuick">
-    <option value="1">Última hora</option>
-    <option value="3">Últimas 3 horas</option>
-    <option value="6">Últimas 6 horas</option>
-    <option value="12">Últimas 12 horas</option>
-    <option value="24" selected>Últimas 24 horas</option>
-    <option value="all">Todo</option>
-  </select>
+  <select id="heatmapQuick"><option value="1">Última hora</option><option value="3">Últimas 3 horas</option><option value="6">Últimas 6 horas</option><option value="12">Últimas 12 horas</option><option value="24" selected>Últimas 24h</option></select>
 </div>
 
     <div class="hm-controls">

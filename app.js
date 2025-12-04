@@ -7,7 +7,9 @@ const JSON_URL =
 let dataColumns = [];
 let dataRows = [];
 let secadoras = [];
-let selectedHeatmap = new Set(); // Secadoras activas para heatmap
+
+let selectedHeatmap = new Set();
+let selectedTimeline = new Set();
 
 /* ===============================
    THEME
@@ -64,14 +66,14 @@ function formatLocalISO(d) {
 }
 
 /* ===============================
-   FILTRO GLOBAL (KPI, timeline, tabla)
+   FILTRO GLOBAL
 ================================*/
 function getQuickRows() {
   const quick = document.getElementById("quickRange").value;
-  if (quick === "all") return dataRows;
   const hours = parseInt(quick);
-  const limit = new Date(Date.now() - hours * 3600000);
+  if (!isFinite(hours)) return dataRows;
 
+  const limit = new Date(Date.now() - hours * 3600000);
   return dataRows.filter((r) => {
     const ts = parseDotNetDate(r["Time_Stamp"]);
     return ts && ts >= limit;
@@ -79,16 +81,14 @@ function getQuickRows() {
 }
 
 /* ===============================
-   FILTRO INDEPENDIENTE DEL HEATMAP
+   FILTRO HEATMAP (independiente)
 ================================*/
 function getHeatmapRows() {
   const hmQuick = document.getElementById("heatmapQuick").value;
-
-  if (hmQuick === "all") return dataRows;
-
   const hours = parseInt(hmQuick);
-  const limit = new Date(Date.now() - hours * 3600000);
+  if (!isFinite(hours)) return dataRows;
 
+  const limit = new Date(Date.now() - hours * 3600000);
   return dataRows.filter((r) => {
     const ts = parseDotNetDate(r["Time_Stamp"]);
     return ts && ts >= limit;
@@ -208,38 +208,47 @@ function renderCards() {
 /* ===============================
    HEATMAP
 ================================*/
-function lerp(a, b, t) {
-  return Math.round(a + (b - a) * t);
-}
-function rgb(r, g, b) {
-  return `rgb(${r},${g},${b})`;
-}
-function bgrGradient(t) {
-  t = Math.max(0, Math.min(1, t));
-  const blue = [0, 120, 255];
-  const green = [0, 200, 0];
-  const red = [255, 60, 60];
+function colorByOptimal(v) {
+  if (v == null || isNaN(v)) return "transparent";
+  const blue = [0, 120, 255],
+    green = [0, 200, 0],
+    red = [255, 60, 60];
 
-  if (t <= 0.5) {
-    const k = t / 0.5;
-    return rgb(lerp(blue[0], green[0], k), lerp(blue[1], green[1], k), lerp(blue[2], green[2], k));
+  function lerp(a, b, t) {
+    return Math.round(a + (b - a) * Math.max(0, Math.min(1, t)));
+  }
+  function rgb(c) {
+    return `rgb(${c[0]},${c[1]},${c[2]})`;
+  }
+
+  if (v < 55) {
+    const t = v / 55;
+    return rgb([
+      lerp(blue[0], green[0], t),
+      lerp(blue[1], green[1], t),
+      lerp(blue[2], green[2], t),
+    ]);
+  } else if (v <= 65) {
+    return rgb(green);
   } else {
-    const k = (t - 0.5) / 0.5;
-    return rgb(
-      lerp(green[0], red[0], k),
-      lerp(green[1], red[1], k),
-      lerp(green[2], red[2], k)
-    );
+    const t = (v - 65) / 35;
+    return rgb([
+      lerp(green[0], red[0], t),
+      lerp(green[1], red[1], t),
+      lerp(green[2], red[2], t),
+    ]);
   }
 }
 
 function buildHeatmapCheckboxes() {
   const box = document.getElementById("hmCheckboxes");
   box.innerHTML = secadoras
-    .map((s) => {
-      const checked = selectedHeatmap.has(s) ? "checked" : "";
-      return `<label><input type="checkbox" value="${s}" ${checked}> ${s}</label>`;
-    })
+    .map(
+      (s) =>
+        `<label><input type="checkbox" value="${s}" ${
+          selectedHeatmap.has(s) ? "checked" : ""
+        }> ${s}</label>`
+    )
     .join("");
 
   box.querySelectorAll("input").forEach((chk) => {
@@ -255,6 +264,7 @@ function buildHeatmapCheckboxes() {
     buildHeatmapCheckboxes();
     renderHeatmap();
   };
+
   document.getElementById("hmClearAll").onclick = () => {
     selectedHeatmap.clear();
     buildHeatmapCheckboxes();
@@ -266,17 +276,15 @@ function renderHeatmap() {
   const container = document.getElementById("heatmap");
   container.innerHTML = "";
 
-  const rows = getHeatmapRows(); // 🔥 filtro independiente
+  const rows = getHeatmapRows();
   if (!rows.length) return;
 
   const hmQuick = document.getElementById("heatmapQuick").value;
-  const hoursWindow = hmQuick === "all" ? 24 : parseInt(hmQuick);
+  const hoursWindow = parseInt(hmQuick);
 
-  // Última lectura en la ventana
   const lastTs = parseDotNetDate(rows[0]["Time_Stamp"]);
   const since = new Date(lastTs.getTime() - hoursWindow * 3600000);
 
-  // Eje X (horas)
   const hours = [];
   for (let h = hoursWindow - 1; h >= 0; h--) {
     const d = new Date(lastTs.getTime() - h * 3600000);
@@ -284,13 +292,11 @@ function renderHeatmap() {
     hours.push(d.getTime());
   }
 
-  // Header
   const header = document.createElement("div");
   header.className = "hm-header";
   header.style.gridTemplateColumns = `var(--label-w) ${hours
     .map(() => "var(--cell-w)")
     .join(" ")}`;
-
   const lbl = document.createElement("div");
   lbl.className = "label";
   lbl.textContent = "Secadora / Hora";
@@ -300,12 +306,12 @@ function renderHeatmap() {
     const d = new Date(hk);
     const col = document.createElement("div");
     col.className = "hm-hour";
-    col.textContent = d.getHours().toString().padStart(2, "0");
+    col.textContent = String(d.getHours()).padStart(2, "0");
     header.appendChild(col);
   });
+
   container.appendChild(header);
 
-  // Mensaje si no hay seleccionadas
   if (selectedHeatmap.size === 0) {
     const row = document.createElement("div");
     row.className = "hm-row";
@@ -314,7 +320,6 @@ function renderHeatmap() {
     return;
   }
 
-  // Buckets
   const buckets = {};
   rows.forEach((r) => {
     const ts = parseDotNetDate(r["Time_Stamp"]);
@@ -333,17 +338,6 @@ function renderHeatmap() {
     });
   });
 
-  // Min/max global
-  const all = [];
-  [...selectedHeatmap].forEach((sec) => {
-    const obj = buckets[sec] || {};
-    Object.values(obj).forEach((arr) => all.push(...arr));
-  });
-
-  const gmin = all.length ? Math.min(...all) : 0;
-  const gmax = all.length ? Math.max(...all) : 1;
-
-  // Render filas
   [...selectedHeatmap].forEach((sec) => {
     const row = document.createElement("div");
     row.className = "hm-row";
@@ -358,7 +352,9 @@ function renderHeatmap() {
 
     hours.forEach((hk) => {
       const arr = (buckets[sec] || {})[hk] || [];
-      const avg = arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : NaN;
+      const avg = arr.length
+        ? arr.reduce((a, b) => a + b, 0) / arr.length
+        : NaN;
 
       const cell = document.createElement("div");
       cell.className = "hm-cell";
@@ -366,10 +362,11 @@ function renderHeatmap() {
       if (isNaN(avg)) {
         cell.style.background = "transparent";
       } else {
-        const t = (avg - gmin) / (gmax - gmin || 1);
-        cell.style.background = bgrGradient(t);
+        cell.style.background = colorByOptimal(avg);
         cell.textContent = fmt(avg);
-        cell.title = `${sec} – ${new Date(hk).toLocaleString("es-NI")} – ${fmt(avg)} °C`;
+        cell.title = `${sec} – ${new Date(hk).toLocaleString(
+          "es-NI"
+        )} – ${fmt(avg)} °C`;
       }
 
       row.appendChild(cell);
@@ -382,32 +379,83 @@ function renderHeatmap() {
 /* ===============================
    TIMELINE
 ================================*/
+function seriesColor(index) {
+  const hue = Math.round((index / Math.max(1, secadoras.length)) * 360);
+  return `hsl(${hue}, 75%, 55%)`;
+}
+
+function buildTimelineCheckboxes() {
+  const box = document.getElementById("timelineChecks");
+  if (!box) return;
+
+  box.innerHTML = secadoras
+    .map((s, i) => {
+      const checked = selectedTimeline.has(s) ? "checked" : "";
+      const color = seriesColor(i);
+      return `
+        <label>
+          <span class="color-dot" style="background:${color}"></span>
+          <input type="checkbox" value="${s}" ${checked}> ${s}
+        </label>`;
+    })
+    .join("");
+
+  box.querySelectorAll("input").forEach((chk) => {
+    chk.addEventListener("change", () => {
+      if (chk.checked) selectedTimeline.add(chk.value);
+      else selectedTimeline.delete(chk.value);
+      renderTimeline();
+    });
+  });
+
+  document.getElementById("tmSelectAll").onclick = () => {
+    secadoras.forEach((s) => selectedTimeline.add(s));
+    buildTimelineCheckboxes();
+    renderTimeline();
+  };
+
+  document.getElementById("tmClearAll").onclick = () => {
+    selectedTimeline.clear();
+    buildTimelineCheckboxes();
+    renderTimeline();
+  };
+}
+
 function renderTimeline() {
   const svg = document.getElementById("timelineSvg");
   svg.innerHTML = "";
 
-  const sec = document.getElementById("timelineSecadora").value;
+  const selList = [
+    ...(selectedTimeline.size ? selectedTimeline : new Set(secadoras)),
+  ];
+
   const range = document.getElementById("timelineRange").value;
-
   const rows = getQuickRows();
-  if (!rows.length) return;
 
-  const limit = range === "all" ? null : new Date(Date.now() - parseInt(range) * 3600000);
-  const pts = [];
+  if (!rows.length || selList.length === 0) return;
 
-  rows.forEach((r) => {
-    const ts = parseDotNetDate(r["Time_Stamp"]);
-    const val = parseFloat(r[sec]);
-    if (!ts || isNaN(val)) return;
-    if (limit && ts < limit) return;
+  const limit = isFinite(parseInt(range))
+    ? new Date(Date.now() - parseInt(range) * 3600000)
+    : null;
 
-    pts.push({ ts: ts.getTime(), val, rawTs: ts });
-  });
+  const series = selList
+    .map((sec) => {
+      const pts = [];
+      rows.forEach((r) => {
+        const ts = parseDotNetDate(r["Time_Stamp"]);
+        const val = parseFloat(r[sec]);
+        if (!ts || isNaN(val)) return;
+        if (limit && ts < limit) return;
+        pts.push({ ts: ts.getTime(), val, rawTs: ts, sec });
+      });
+      return { sec, pts };
+    })
+    .filter((s) => s.pts.length);
 
-  if (!pts.length) return;
+  if (!series.length) return;
 
-  const width = 1100;
-  const height = 520;
+  const width = 1100,
+    height = 520;
   const padL = 70,
     padR = 28,
     padT = 40,
@@ -415,10 +463,11 @@ function renderTimeline() {
 
   svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
 
-  const minTs = Math.min(...pts.map((p) => p.ts));
-  const maxTs = Math.max(...pts.map((p) => p.ts));
-  const minVal = Math.min(...pts.map((p) => p.val));
-  const maxVal = Math.max(...pts.map((p) => p.val));
+  const allPts = series.flatMap((s) => s.pts);
+  const minTs = Math.min(...allPts.map((p) => p.ts));
+  const maxTs = Math.max(...allPts.map((p) => p.ts));
+  const minVal = Math.min(...allPts.map((p) => p.val));
+  const maxVal = Math.max(...allPts.map((p) => p.val));
 
   const mapX = (ts) =>
     padL + ((ts - minTs) / (maxTs - minTs || 1)) * (width - padL - padR);
@@ -447,9 +496,9 @@ function renderTimeline() {
     svg.appendChild(txt);
   }
 
-  // Líneas verticales
-  const tickEvery = Math.max(1, Math.floor(pts.length / 12));
-  pts.forEach((p, i) => {
+  // Vertical ticks
+  const tickEvery = Math.max(1, Math.floor(allPts.length / 12));
+  allPts.forEach((p, i) => {
     if (i % tickEvery !== 0) return;
 
     const x = mapX(p.ts);
@@ -463,32 +512,71 @@ function renderTimeline() {
     svg.appendChild(line);
 
     const d = new Date(p.ts);
-    const label = document.createElementNS("http://www.w3.org/2000/svg", "text");
-    label.setAttribute("x", x);
-    label.setAttribute("y", height - padB + 20);
-    label.setAttribute("text-anchor", "middle");
-    label.setAttribute("fill", "var(--muted)");
-    label.textContent = d.getHours().toString().padStart(2, "0");
-    svg.appendChild(label);
+    const lbl = document.createElementNS("http://www.w3.org/2000/svg", "text");
+    lbl.setAttribute("x", x);
+    lbl.setAttribute("y", height - padB + 20);
+    lbl.setAttribute("text-anchor", "middle");
+    lbl.setAttribute("fill", "var(--muted)");
+    lbl.textContent = String(d.getHours()).padStart(2, "0");
+    svg.appendChild(lbl);
   });
 
-  // Línea principal animada
-  let d = `M ${mapX(pts[0].ts)} ${mapY(pts[0].val)}`;
-  pts.forEach((p) => (d += ` L ${mapX(p.ts)} ${mapY(p.val)}`));
+  // Draw series
+  series.forEach((s, idx) => {
+    let d = `M ${mapX(s.pts[0].ts)} ${mapY(s.pts[0].val)}`;
+    s.pts.forEach((p) => (d += ` L ${mapX(p.ts)} ${mapY(p.val)}`));
 
-  const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
-  path.setAttribute("d", d);
-  path.setAttribute("stroke", "#4FA3F7");
-  path.setAttribute("stroke-width", "3");
-  path.setAttribute("fill", "none");
-  path.style.strokeDasharray = "2000";
-  path.style.strokeDashoffset = "2000";
-  svg.appendChild(path);
+    const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+    path.setAttribute("d", d);
 
-  setTimeout(() => {
-    path.style.transition = "stroke-dashoffset 2.5s ease";
-    path.style.strokeDashoffset = "0";
-  }, 50);
+    const color = seriesColor(idx);
+    path.setAttribute("stroke", color);
+    path.setAttribute("stroke-width", "2.5");
+    path.setAttribute("fill", "none");
+    svg.appendChild(path);
+
+    try {
+      const total = path.getTotalLength();
+      path.style.strokeDasharray = total;
+      path.style.strokeDashoffset = total;
+      setTimeout(() => {
+        path.style.transition = "stroke-dashoffset 1.6s ease";
+        path.style.strokeDashoffset = "0";
+      }, 30);
+    } catch {}
+
+    // Points
+    s.pts.forEach((p) => {
+      const c = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+      c.setAttribute("cx", mapX(p.ts));
+      c.setAttribute("cy", mapY(p.val));
+      c.setAttribute("r", "3.5");
+      c.setAttribute("fill", "#fff");
+      c.setAttribute("stroke", color);
+      c.addEventListener("mouseenter", (evt) => showTip(evt, p, color));
+      c.addEventListener("mouseleave", hideTip);
+      svg.appendChild(c);
+    });
+  });
+
+  // Legend
+  const legend = document.createElement("div");
+  legend.className = "legend";
+  legend.innerHTML = series
+    .map(
+      (s, idx) =>
+        `<span><span class="color-dot" style="background:${seriesColor(
+          idx
+        )}"></span>${s.sec}</span>`
+    )
+    .join("");
+
+  const wrap = document.querySelector(".timeline");
+  if (wrap) {
+    const old = wrap.querySelector(".legend");
+    if (old) old.remove();
+    wrap.insertBefore(legend, wrap.querySelector(".timeline-viewport"));
+  }
 
   // Tooltip
   const tooltip = document.createElement("div");
@@ -501,30 +589,18 @@ function renderTimeline() {
   tooltip.style.display = "none";
   document.body.appendChild(tooltip);
 
-  function showTip(evt, p) {
+  function showTip(evt, p, color) {
     tooltip.style.display = "block";
     tooltip.style.left = evt.clientX + 10 + "px";
     tooltip.style.top = evt.clientY + 10 + "px";
-    tooltip.innerHTML = `<strong>${sec}</strong><br>Temp: ${fmt(
-      p.val
-    )} °C<br>Hora: ${p.rawTs.toLocaleString("es-NI")}`;
+    tooltip.innerHTML =
+      `<div style="font-weight:700; color:${color}">${p.sec}</div>` +
+      `Temp: ${fmt(p.val)} °C<br>` +
+      `Hora: ${p.rawTs.toLocaleString("es-NI")}`;
   }
-
   function hideTip() {
     tooltip.style.display = "none";
   }
-
-  pts.forEach((p) => {
-    const c = document.createElementNS("http://www.w3.org/2000/svg", "circle");
-    c.setAttribute("cx", mapX(p.ts));
-    c.setAttribute("cy", mapY(p.val));
-    c.setAttribute("r", "5");
-    c.setAttribute("fill", "#fff");
-    c.setAttribute("stroke", "#4FA3F7");
-    c.addEventListener("mouseenter", (evt) => showTip(evt, p));
-    c.addEventListener("mouseleave", hideTip);
-    svg.appendChild(c);
-  });
 }
 
 /* ===============================
@@ -583,17 +659,15 @@ function renderHistoryTables() {
       .sort()
       .map((k) => {
         const obj = map.get(k);
-        return `<tr><td><strong>${k}</strong></td>${
-          secadoras
-            .map((s) => {
-              const arr = obj[s] || [];
-              const avg = arr.length
-                ? arr.reduce((a, b) => a + b, 0) / arr.length
-                : 0;
-              return `<td style="color:${colorTemp(avg)}">${fmt(avg)}</td>`;
-            })
-            .join("")
-        }</tr>`;
+        return `<tr><td><strong>${k}</strong></td>${secadoras
+          .map((s) => {
+            const arr = obj[s] || [];
+            const avg = arr.length
+              ? arr.reduce((a, b) => a + b, 0) / arr.length
+              : 0;
+            return `<td style="color:${colorTemp(avg)}">${fmt(avg)}</td>`;
+          })
+          .join("")}</tr>`;
       })
       .join("");
 
@@ -643,7 +717,8 @@ function renderTable() {
     })
     .join("");
 
-  document.getElementById("rowCount").textContent = rows.length + " filas";
+  document.getElementById("rowCount").textContent =
+    rows.length + " filas";
 }
 
 /* ===============================
@@ -706,20 +781,27 @@ function renderAll() {
 ================================*/
 async function init() {
   try {
-    const res = await fetch(JSON_URL + "?t=" + Date.now(), { cache: "no-store" });
+    const res = await fetch(JSON_URL + "?t=" + Date.now(), {
+      cache: "no-store",
+    });
     const json = await res.json();
 
     dataColumns = json.columns;
     dataRows = json.rows;
 
-    secadoras = dataColumns.filter((c) => c.toLowerCase().includes("secadora"));
+    secadoras = dataColumns.filter((c) =>
+      c.toLowerCase().includes("secadora")
+    );
 
-    if (selectedHeatmap.size === 0) secadoras.forEach((s) => selectedHeatmap.add(s));
+    if (selectedHeatmap.size === 0)
+      secadoras.forEach((s) => selectedHeatmap.add(s));
 
     buildHeatmapCheckboxes();
 
-    const sel = document.getElementById("timelineSecadora");
-    sel.innerHTML = secadoras.map((s) => `<option>${s}</option>`).join("");
+    if (selectedTimeline.size === 0)
+      secadoras.forEach((s) => selectedTimeline.add(s));
+
+    buildTimelineCheckboxes();
 
     document.getElementById("lastUpdated").textContent =
       "Actualizado: " + new Date().toLocaleString();
@@ -739,18 +821,21 @@ document.addEventListener("DOMContentLoaded", () => {
 
   document.getElementById("quickRange").onchange = renderAll;
   document.getElementById("heatmapQuick").onchange = renderHeatmap;
-
-  document.getElementById("timelineSecadora").onchange = renderTimeline;
   document.getElementById("timelineRange").onchange = renderTimeline;
 
-  document.getElementById("downloadCSV").onclick = downloadCSVCurrentFilter;
+  document.getElementById("downloadCSV").onclick =
+    downloadCSVCurrentFilter;
   document.getElementById("exportPDF").onclick = exportPDF;
 
   document.querySelectorAll(".tab").forEach((btn) => {
     btn.addEventListener("click", () => {
-      document.querySelectorAll(".tab").forEach((b) => b.classList.remove("active"));
+      document
+        .querySelectorAll(".tab")
+        .forEach((b) => b.classList.remove("active"));
       btn.classList.add("active");
+
       const tab = btn.dataset.tab;
+
       document
         .getElementById("historyDaily")
         .classList.toggle("hidden", tab !== "daily");
