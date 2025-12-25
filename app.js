@@ -1,12 +1,25 @@
 /* ===============================
    CONFIG
 ================================*/
-const JSON_URL =
-  "https://raw.githubusercontent.com/olamMat/TemperaturasRepo/refs/heads/main/ReporteTemperaturas.json";
+const DATASETS = {
+  horizontales: {
+    label: "Secadoras",
+    url: "https://raw.githubusercontent.com/olamMat/TemperaturasRepo/refs/heads/main/ReporteTemperaturas.json",
+    hornos: true,
+  },
+  verticales: {
+    label: "Secadoras Verticales",
+    url: "https://raw.githubusercontent.com/olamMat/TemperaturasRepo/refs/heads/main/ReporteVerticales.json",
+    hornos: false,
+  },
+};
 
 let dataColumns = [];
 let dataRows = [];
 let secadoras = [];
+let availableDates = [];
+let selectedDate = "all";
+let currentDataset = "horizontales";
 
 let selectedHeatmap = new Set();
 let selectedTimeline = new Set();
@@ -66,31 +79,68 @@ function formatLocalISO(d) {
     ":" + pad(d.getSeconds())
   );
 }
+function dayKey(d) {
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+function getLatestTimestamp(rows) {
+  let latest = null;
+  rows.forEach((r) => {
+    const ts = parseDotNetDate(r["Time_Stamp"]);
+    if (ts && (!latest || ts > latest)) latest = ts;
+  });
+  return latest;
+}
+function getAvailableDates(rows) {
+  const set = new Set();
+  rows.forEach((r) => {
+    const ts = parseDotNetDate(r["Time_Stamp"]);
+    if (ts) set.add(dayKey(ts));
+  });
+  return [...set].sort((a, b) => b.localeCompare(a));
+}
+function getBaseRows() {
+  if (selectedDate === "all") return dataRows;
+  return dataRows.filter((r) => {
+    const ts = parseDotNetDate(r["Time_Stamp"]);
+    return ts && dayKey(ts) === selectedDate;
+  });
+}
+function rowsWithinHours(rows, hours) {
+  if (!isFinite(hours)) return rows;
+  const ref = getLatestTimestamp(rows);
+  if (!ref) return [];
+  const limit = new Date(ref.getTime() - hours * 3600000);
+  return rows.filter((r) => {
+    const ts = parseDotNetDate(r["Time_Stamp"]);
+    return ts && ts >= limit && ts <= ref;
+  });
+}
 
 /* ===============================
    FILTROS DE RANGO
 ================================*/
 function getQuickRows() {
+  const base = getBaseRows();
   const quick = document.getElementById("quickRange").value;
   const hours = parseInt(quick);
-  if (!isFinite(hours)) return dataRows;
-
-  const limit = new Date(Date.now() - hours * 3600000);
-  return dataRows.filter((r) => {
-    const ts = parseDotNetDate(r["Time_Stamp"]);
-    return ts && ts >= limit;
-  });
+  return rowsWithinHours(base, hours);
 }
 function getHeatmapRows() {
+  const base = getBaseRows();
   const hmQuick = document.getElementById("heatmapQuick").value;
   const hours = parseInt(hmQuick);
-  if (!isFinite(hours)) return dataRows;
-
-  const limit = new Date(Date.now() - hours * 3600000);
-  return dataRows.filter((r) => {
-    const ts = parseDotNetDate(r["Time_Stamp"]);
-    return ts && ts >= limit;
-  });
+  return rowsWithinHours(base, hours);
+}
+function updateDateFilterOptions() {
+  const sel = document.getElementById("dateFilter");
+  if (!sel) return;
+  sel.innerHTML =
+    `<option value="all">Todas las fechas</option>` +
+    availableDates
+      .map((d) => `<option value="${d}" ${d === selectedDate ? "selected" : ""}>${d}</option>`)
+      .join("");
+  sel.value = selectedDate || "all";
 }
 
 /* ===============================
@@ -117,7 +167,8 @@ function renderCards() {
   const rows = getQuickRows();
   if (!rows.length) return;
 
-  const lastTs = parseDotNetDate(rows[0]["Time_Stamp"]);
+  const lastTs = getLatestTimestamp(rows);
+  if (!lastTs) return;
   const since24 = new Date(lastTs.getTime() - 24 * 3600000);
 
   secadoras.forEach((sec) => {
@@ -240,7 +291,8 @@ function renderHeatmap() {
   if (!rows.length) return;
 
   const hoursWindow = parseInt(document.getElementById("heatmapQuick").value);
-  const lastTs = parseDotNetDate(rows[0]["Time_Stamp"]);
+  const lastTs = getLatestTimestamp(rows);
+  if (!lastTs) return;
   const since = new Date(lastTs.getTime() - hoursWindow * 3600000);
 
   const hours = [];
@@ -326,6 +378,9 @@ function buildTimelineCheckboxes() {
   const box = document.getElementById("timelineChecks");
   if (!box) return;
 
+  const selectAllBtn = document.getElementById("tmSelectAll");
+  if (selectAllBtn) selectAllBtn.textContent = `Ver ${secadoras.length}`;
+
   box.innerHTML = secadoras
     .map((s, i) => {
       const checked = selectedTimeline.has(s) ? "checked" : "";
@@ -359,7 +414,14 @@ function buildTimelineCheckboxes() {
 // Bloque Hornos → solo afecta selección del Timeline
 function buildHornosControls() {
   const cont = document.getElementById("hornosChecks");
-  if (!cont) return;
+  const wrap = document.querySelector(".hornos-controls");
+  if (!cont || !wrap) return;
+  if (!DATASETS[currentDataset]?.hornos) {
+    wrap.style.display = "none";
+    cont.innerHTML = "";
+    return;
+  }
+  wrap.style.display = "";
   cont.innerHTML = `
     <label><input type="checkbox" class="chkHorno" value="1"> Horno 1</label>
     <label><input type="checkbox" class="chkHorno" value="2"> Horno 2</label>
@@ -401,8 +463,10 @@ function renderTimeline() {
 
   if (!rows.length || selList.length === 0) return;
 
+  const refTs = getLatestTimestamp(rows);
+
   const limit = isFinite(parseInt(range))
-    ? new Date(Date.now() - parseInt(range) * 3600000)
+    ? refTs ? new Date(refTs.getTime() - parseInt(range) * 3600000) : null
     : null;
 
   const series = selList
@@ -710,29 +774,53 @@ function renderAll() {
   renderTable();
 }
 
+function applyDatasetData(json, { resetSelections = true } = {}) {
+  dataColumns = json.columns || [];
+  dataRows = json.rows || [];
+
+  secadoras = dataColumns.filter((c) => {
+    const l = c.toLowerCase();
+    return l.includes("secadora") || l.includes("vertical");
+  });
+
+  availableDates = getAvailableDates(dataRows);
+  if (selectedDate !== "all" && !availableDates.includes(selectedDate)) {
+    selectedDate = availableDates[0] || "all";
+  } else if (selectedDate === "all" && availableDates.length) {
+    selectedDate = availableDates[0];
+  }
+  updateDateFilterOptions();
+
+  if (!selectedHeatmap.size || resetSelections) selectedHeatmap = new Set(secadoras);
+  if (!selectedTimeline.size || resetSelections) selectedTimeline = new Set(secadoras);
+
+  buildHeatmapCheckboxes();
+  buildTimelineCheckboxes();
+  buildHornosControls();
+
+  document.getElementById("lastUpdated").textContent =
+    "Actualizado: " + new Date().toLocaleString();
+
+  document.getElementById("datasetTitle").textContent =
+    DATASETS[currentDataset]?.label || "Secadoras";
+
+  renderAll();
+}
+
 /* ===============================
    INIT + REFRESH SOLO TIMELINE
 ================================*/
-async function init() {
+async function loadDataset(key, { resetSelections = true } = {}) {
+  currentDataset = key;
   try {
-    const res = await fetch(JSON_URL + "?t=" + Date.now(), { cache: "no-store" });
+    const url = DATASETS[key]?.url;
+    if (!url) throw new Error("Dataset no encontrado");
+    document.querySelectorAll(".ds-btn").forEach((b) =>
+      b.classList.toggle("active", b.dataset.dataset === key)
+    );
+    const res = await fetch(url + "?t=" + Date.now(), { cache: "no-store" });
     const json = await res.json();
-
-    dataColumns = json.columns;
-    dataRows = json.rows;
-
-    secadoras = dataColumns.filter((c) => c.toLowerCase().includes("secadora"));
-
-    if (selectedHeatmap.size === 0) secadoras.forEach((s) => selectedHeatmap.add(s));
-    if (selectedTimeline.size === 0) secadoras.forEach((s) => selectedTimeline.add(s));
-
-    buildHeatmapCheckboxes();
-    buildTimelineCheckboxes();
-    buildHornosControls();
-
-    document.getElementById("lastUpdated").textContent = "Actualizado: " + new Date().toLocaleString();
-
-    renderAll();
+    applyDatasetData(json, { resetSelections });
   } catch (e) {
     alert("Error al cargar JSON: " + e.message);
     console.error(e);
@@ -742,9 +830,16 @@ async function init() {
 // SOLO actualizar Timeline en intervalos (relee datos, pero no re-renderiza el resto)
 async function refreshTimeline() {
   try {
-    const res = await fetch(JSON_URL + "?t=" + Date.now(), { cache: "no-store" });
+    const url = DATASETS[currentDataset]?.url;
+    if (!url) return;
+    const res = await fetch(url + "?t=" + Date.now(), { cache: "no-store" });
     const json = await res.json();
     dataRows = json.rows; // mantenemos columnas/controles; solo cambiaron filas
+    availableDates = getAvailableDates(dataRows);
+    if (selectedDate !== "all" && !availableDates.includes(selectedDate)) {
+      selectedDate = availableDates[0] || "all";
+    }
+    updateDateFilterOptions();
     renderTimeline();
   } catch (e) {
     console.error("Error refrescando timeline:", e);
@@ -755,11 +850,28 @@ async function refreshTimeline() {
    EVENTOS
 ================================*/
 document.addEventListener("DOMContentLoaded", () => {
-  init();
+  loadDataset(currentDataset);
 
   document.getElementById("quickRange").onchange = renderAll;
   document.getElementById("heatmapQuick").onchange = renderHeatmap;
   document.getElementById("timelineRange").onchange = renderTimeline;
+  document.getElementById("dateFilter").onchange = (e) => {
+    selectedDate = e.target.value || "all";
+    renderAll();
+  };
+
+  document.querySelectorAll(".ds-btn").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const key = btn.dataset.dataset;
+      if (!key || key === currentDataset) return;
+      document.querySelectorAll(".ds-btn").forEach((b) => b.classList.toggle("active", b === btn));
+      // Cambiar dataset resetea selecciones para evitar arrastrar nombres inválidos
+      selectedHeatmap.clear();
+      selectedTimeline.clear();
+      selectedDate = "all";
+      loadDataset(key, { resetSelections: true });
+    });
+  });
 
   document.getElementById("downloadCSV").onclick = downloadCSVCurrentFilter;
   document.getElementById("exportPDF").onclick = exportPDF;

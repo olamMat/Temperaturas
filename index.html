@@ -18,10 +18,14 @@
 
   <header class="topbar">
     <div>
-      <h1>Dashboard de Temperaturas – Secadoras</h1>
+      <h1>Dashboard de Temperaturas – <span id="datasetTitle">Secadoras</span></h1>
       <div id="lastUpdated" class="muted">Actualizado: --</div>
     </div>
     <div class="actions">
+      <div class="dataset-switch">
+        <button class="ds-btn active" data-dataset="horizontales">Secadoras</button>
+        <button class="ds-btn" data-dataset="verticales">Verticales</button>
+      </div>
       <button id="toggleTheme" title="Cambiar tema">🌓 Tema</button>
       <button id="exportPDF" title="Exportar PDF">📄 Exportar PDF</button>
       <button id="downloadCSV" title="Descargar CSV">⬇️ CSV</button>
@@ -33,6 +37,10 @@
       <div class="filter-item">
         <label>Rango rápido</label>
         <select id="quickRange"><option value="1">Última hora</option><option value="3">Últimas 3 horas</option><option value="6">Últimas 6 horas</option><option value="12">Últimas 12 horas</option><option value="24" selected>Últimas 24h</option></select>
+      </div>
+      <div class="filter-item">
+        <label>Fecha (aplica a toda la vista)</label>
+        <select id="dateFilter"><option>Cargando...</option></select>
       </div>
       <div class="filter-item">
         <span class="muted">KPI: el promedio ignora valores 0. Heatmap y línea incluyen 0.</span>
@@ -54,10 +62,10 @@
 
     <div class="timeline-controls">
       <div class="timeline-multi">
-  <div class="tm-head">
-    <strong>Secadoras:</strong>
-    <div class="tm-actions">
-      <button id="tmSelectAll" type="button">Ver 18</button>
+    <div class="tm-head">
+      <strong>Secadoras:</strong>
+      <div class="tm-actions">
+      <button id="tmSelectAll" type="button">Ver todas</button>
       <button id="tmClearAll" type="button">Limpiar</button>
     </div>
   </div>
