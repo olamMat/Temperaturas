@@ -4,12 +4,12 @@
 const DATASETS = {
   horizontales: {
     label: "Secadoras",
-    url: "https://raw.githubusercontent.com/olamMat/TemperaturasRepo/refs/heads/main/ReporteTemperaturas.json",
+    url: "https://temperaturas-dashboard-default-rtdb.firebaseio.com/ReporteTemperaturas.json",
     hornos: true,
   },
   verticales: {
     label: "Secadoras Verticales",
-    url: "https://raw.githubusercontent.com/olamMat/TemperaturasRepo/refs/heads/main/ReporteVerticales.json",
+    url: "https://temperaturas-dashboard-default-rtdb.firebaseio.com/ReporteVerticales.json",
     hornos: false,
   },
 };
@@ -363,12 +363,30 @@ function renderTimeline() {
   const isDark = document.documentElement.getAttribute("data-theme") !== "light";
   const textColor = isDark ? '#e9ecf5' : '#1a1a1a';
 
+  const chartTitle = selList.length <= 4 
+      ? selList.join(', ') 
+      : `${selList.length} secadoras seleccionadas`;
+
   timelineChart.setOption({
       backgroundColor: 'transparent',
+      title: { 
+          text: chartTitle, 
+          textStyle: { color: textColor, fontSize: 14, fontWeight: 'normal' },
+          left: 'center',
+          top: 0
+      },
       tooltip: { trigger: 'axis' },
-      legend: { data: selList, type: 'scroll', textStyle: { color: textColor } },
-      grid: { left: '3%', right: '4%', bottom: '15%', containLabel: true },
-      toolbox: { feature: { dataZoom: { yAxisIndex: 'none' }, restore: {}, saveAsImage: {} } },
+      legend: { data: selList, type: 'scroll', textStyle: { color: textColor }, top: 25 },
+      grid: { left: '3%', right: '4%', bottom: '15%', top: 70, containLabel: true },
+      toolbox: { 
+          feature: { 
+              dataZoom: { yAxisIndex: 'none' }, 
+              restore: {}, 
+              saveAsImage: { 
+                  name: 'LineaTiempo_' + (selList.length <= 3 ? selList.join('_').replace(/\s+/g,'') : selList.length + '_Secadoras') 
+              } 
+          } 
+      },
       dataZoom: [{ type: 'inside', start: 0, end: 100 }, { start: 0, end: 100 }],
       xAxis: { type: 'time', splitLine: { show: false }, axisLabel: { color: textColor } },
       yAxis: { type: 'value', axisLabel: { color: textColor }, splitLine: { lineStyle: { color: isDark ? '#2c303b' : '#e0e0e0' } } },
@@ -711,6 +729,12 @@ function renderAll() {
 }
 
 function applyDatasetData(json, { resetSelections = true } = {}) {
+  if (!json) {
+    console.warn("No hay datos todavía. Firebase devolvió null.");
+    document.getElementById("datasetTitle").textContent = "Sin datos en Firebase";
+    return;
+  }
+  
   dataColumns = json.columns || []; dataRows = json.rows || [];
   secadoras = dataColumns.filter((c) => { const l = c.toLowerCase(); return l.includes("secadora") || l.includes("vertical"); });
   availableDates = getAvailableDates(dataRows);
