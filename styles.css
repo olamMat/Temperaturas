@@ -26,7 +26,7 @@
 }
 
 * { box-sizing: border-box; }
-html, body { margin:0; padding:0; font-family: "Inter", system-ui, Arial, sans-serif; color: var(--text); background: var(--bg); }
+html, body { margin:0; padding:0; font-family: "Inter", system-ui, Arial, sans-serif; color: var(--text); background: var(--bg); transition: background 0.3s; }
 
 .topbar{
   display:flex; align-items:center; justify-content:space-between;
@@ -69,12 +69,12 @@ section{ padding:18px 16px; }
 }
 .card{
   background:var(--card); padding:16px; border-radius: var(--radius); box-shadow: var(--shadow);
-  border:1px solid rgba(255,255,255,.06);
+  border:1px solid rgba(255,255,255,.06); position: relative;
 }
 .card h3{ margin:0 0 10px 0; font-size:18px; font-weight:700; }
 
 .kpi-grid{
-  display:grid; grid-template-columns: repeat(2,1fr); gap:12px;
+  display:grid; grid-template-columns: repeat(2,1fr); gap:12px; margin-top:12px;
 }
 .kpi{
   background:rgba(255,255,255,.04); padding:12px; border-radius:12px; text-align:center;
@@ -83,8 +83,27 @@ section{ padding:18px 16px; }
 .kpi strong{ font-size:20px; }
 
 .badge{
-  display:inline-flex; align-items:center; gap:6px; padding:4px 8px; border-radius:999px;
-  font-size:12px; font-weight:600; background:rgba(255,255,255,.06);
+  display:inline-flex; align-items:center; justify-content:center; gap:6px; padding:4px 8px; border-radius:999px;
+  font-size:12px; font-weight:600; background:rgba(255,255,255,.06); width: 100%; box-sizing: border-box;
+}
+
+/* Prediction text in card */
+.kpi-prediction {
+  grid-column: 1 / -1;
+  text-align: center;
+  font-size: 13px;
+  font-weight: 600;
+  padding: 8px;
+  border-radius: 8px;
+  margin-top: 8px;
+  background: rgba(255, 255, 255, 0.05);
+}
+
+/* Gauge container */
+.gauge-container {
+  width: 100%;
+  height: 120px;
+  margin-bottom: 10px;
 }
 
 /* Timeline */
@@ -92,8 +111,7 @@ section{ padding:18px 16px; }
 .timeline-controls { display:flex; gap:16px; align-items:center; flex-wrap:wrap; margin:8px 0 12px; }
 .timeline-controls label { font-size:14px; color: var(--text); }
 .timeline-controls select { margin-left:6px; background:var(--card); color:var(--text); border:none; border-radius:10px; padding:8px 10px; }
-.timeline-viewport { width:100%; height:520px; }
-#timelineSvg { width:100%; height:100%; background:var(--card); border-radius:12px; }
+.timeline-viewport { width:100%; }
 
 /* Heatmap */
 .hm-controls{
@@ -128,28 +146,28 @@ section{ padding:18px 16px; }
 }
 
 /* History & table */
-.table-wrapper{ overflow:auto; background:var(--bg2); border-radius: var(--radius); }
+.table-wrapper{ overflow:auto; background:var(--bg2); border-radius: var(--radius); max-height: 500px;}
 table{ width:100%; border-collapse: collapse; }
-th, td{ padding:10px; border-bottom:1px solid rgba(255,255,255,.06); }
+th, td{ padding:10px; border-bottom:1px solid rgba(255,255,255,.06); text-align: center; }
+td:first-child, th:first-child { text-align: left; }
 th{ position:sticky; top:0; background:var(--card); z-index:5; }
 
-.tabs{ display:flex; gap:8px; }
+.tabs{ display:flex; gap:8px; flex-wrap:wrap;}
 .tab{
   padding:8px 10px; border-radius:10px; border:none; cursor:pointer; background:var(--card);
-  color:var(--text);
+  color:var(--text); box-shadow: var(--shadow);
 }
 .tab.active{ outline:2px solid var(--accent); }
 
 .history-table{ padding: 12px 16px 16px 16px; }
-.hidden{ display:none; }
+.hidden{ display:none !important; }
 
 /* Responsive */
 @media (max-width: 720px){
-  .kpi-grid{ grid-template-columns: 1fr 1fr; } /* 2 columnas también en móvil */
+  .kpi-grid{ grid-template-columns: 1fr 1fr; }
   .actions{ display:flex; align-items:flex-start; gap:6px; flex-direction:column; }
   .topbar{ align-items:flex-start; }
   :root{ --label-w: 130px; --cell-w: 40px; }
-  .timeline-viewport{ height: 480px; }
 }
 .heatmap-fast-filter {
   padding: 12px 16px;
@@ -158,23 +176,11 @@ th{ position:sticky; top:0; background:var(--card); z-index:5; }
   gap: 6px;
 }
 
-.heatmap-fast-filter label {
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--text);
-}
-
+.heatmap-fast-filter label { font-size: 14px; font-weight: 600; color: var(--text); }
 .heatmap-fast-filter select {
-  background: var(--card);
-  color: var(--text);
-  border: none;
-  border-radius: 10px;
-  padding: 8px 10px;
-  width: 180px;
+  background: var(--card); color: var(--text); border: none; border-radius: 10px; padding: 8px 10px; width: 180px;
 }
 
-
-/* Timeline multi-select controls */
 .timeline-multi{ display:flex; flex-direction:column; gap:6px; }
 .tm-head{ display:flex; align-items:center; gap:12px; }
 .tm-actions button{
@@ -185,3 +191,70 @@ th{ position:sticky; top:0; background:var(--card); z-index:5; }
 .tm-checks label{ background:var(--card); padding:6px 10px; border-radius:10px; box-shadow: var(--shadow); font-size:13px; }
 .color-dot{ display:inline-block; width:10px; height:10px; border-radius:999px; margin-right:6px; vertical-align:middle; }
 .legend{ display:flex; flex-wrap:wrap; gap:10px; margin:8px 0; font-size:12px; color:var(--muted); }
+
+/* TV Mode Kiosko */
+body.tv-mode .topbar,
+body.tv-mode .filters,
+body.tv-mode .timeline,
+body.tv-mode .heatmap-section,
+body.tv-mode .history,
+body.tv-mode .tableSection {
+  display: none !important;
+}
+
+body.tv-mode {
+  overflow: hidden;
+}
+
+body.tv-mode .stats {
+  margin: 0;
+  height: 100vh;
+  padding: 20px;
+  border-radius: 0;
+  box-shadow: none;
+  overflow: hidden; /* Hide scrollbar in TV mode, we will auto-scroll */
+}
+
+body.tv-mode .stats h2 {
+  font-size: 2vw;
+  text-align: center;
+  margin-bottom: 20px;
+}
+
+body.tv-mode .card-container {
+  grid-template-columns: repeat(auto-fit, minmax(25vw, 1fr));
+  gap: 20px;
+  overflow-y: auto;
+  height: calc(100vh - 80px);
+  padding-bottom: 50px;
+  scrollbar-width: none; /* Firefox */
+}
+body.tv-mode .card-container::-webkit-scrollbar {
+  display: none; /* Chrome/Safari/Edge */
+}
+
+body.tv-mode .card {
+  transform: scale(1.02);
+  margin-bottom: 15px;
+}
+
+/* Floating Exit Button for TV Mode */
+#btnExitTv {
+  position: fixed;
+  bottom: 20px;
+  right: 20px;
+  background: var(--bad);
+  color: white;
+  border: none;
+  padding: 15px 25px;
+  border-radius: 30px;
+  font-size: 16px;
+  font-weight: bold;
+  cursor: pointer;
+  z-index: 9999;
+  box-shadow: var(--shadow);
+  display: none;
+}
+body.tv-mode #btnExitTv {
+  display: block;
+}

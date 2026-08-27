@@ -8,6 +8,7 @@
 <text y='.9em' font-size='90'>🌡️</text>
 </svg>">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <link rel="manifest" href="manifest.json">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
@@ -17,7 +18,7 @@
 <div id="dashboard">
 
   <header class="topbar">
-    <div>
+    <div class="topbar-titles">
       <h1>Dashboard de Temperaturas – <span id="datasetTitle">Secadoras</span></h1>
       <div id="lastUpdated" class="muted">Actualizado: --</div>
     </div>
@@ -26,6 +27,7 @@
         <button class="ds-btn active" data-dataset="horizontales">Secadoras</button>
         <button class="ds-btn" data-dataset="verticales">Verticales</button>
       </div>
+      <button id="btnTvMode" title="Modo TV Kiosko">📺 Modo TV</button>
       <button id="toggleTheme" title="Cambiar tema">🌓 Tema</button>
       <button id="exportPDF" title="Exportar PDF">📄 Exportar PDF</button>
       <button id="downloadCSV" title="Descargar CSV">⬇️ CSV</button>
@@ -36,7 +38,13 @@
     <div class="filter-row">
       <div class="filter-item">
         <label>Rango rápido</label>
-        <select id="quickRange"><option value="1">Última hora</option><option value="3">Últimas 3 horas</option><option value="6">Últimas 6 horas</option><option value="12">Últimas 12 horas</option><option value="24" selected>Últimas 24h</option></select>
+        <select id="quickRange">
+          <option value="1">Última hora</option>
+          <option value="3">Últimas 3 horas</option>
+          <option value="6">Últimas 6 horas</option>
+          <option value="12">Últimas 12 horas</option>
+          <option value="24" selected>Últimas 24h</option>
+        </select>
       </div>
       <div class="filter-item">
         <label>Fecha (aplica a toda la vista)</label>
@@ -55,49 +63,54 @@
 
   <section class="timeline">
     <div class="section-head">
-      <h2>Línea de tiempo</h2>
-      <span class="muted">Seleccioná la secadora y rango. La línea está animada y cada punto muestra detalles.</span>
+      <h2>Línea de tiempo (ECharts)</h2>
+      <span class="muted">Seleccioná la secadora y rango. Interactúa haciendo zoom o arrastrando el gráfico.</span>
     </div>
-    <div class="timeline-controls">
-
     <div class="timeline-controls">
       <div class="timeline-multi">
-    <div class="tm-head">
-      <strong>Secadoras:</strong>
-      <div class="tm-actions">
-      <button id="tmSelectAll" type="button">Ver todas</button>
-      <button id="tmClearAll" type="button">Limpiar</button>
-    </div>
-  </div>
-  <div id="timelineChecks" class="tm-checks"></div>
-</div>
-<!-- NUEVO: Hornos (solo afecta Timeline) -->
-  <div class="hornos-controls">
-    <strong>Hornos:</strong>
-    <div id="hornosChecks" class="hornos-checks"></div>
-  </div>
-</div>
+        <div class="tm-head">
+          <strong>Secadoras:</strong>
+          <div class="tm-actions">
+            <button id="tmSelectAll" type="button">Ver todas</button>
+            <button id="tmClearAll" type="button">Limpiar</button>
+          </div>
+        </div>
+        <div id="timelineChecks" class="tm-checks"></div>
+      </div>
+      <div class="hornos-controls">
+        <strong>Hornos:</strong>
+        <div id="hornosChecks" class="hornos-checks"></div>
+      </div>
       <label>Rango:
-        <select id="timelineRange"><option value="1">Última hora</option><option value="3">Últimas 3 horas</option><option value="6">Últimas 6 horas</option><option value="12">Últimas 12 horas</option><option value="24" selected>Últimas 24h</option></select>
+        <select id="timelineRange">
+          <option value="1">Última hora</option>
+          <option value="3">Últimas 3 horas</option>
+          <option value="6">Últimas 6 horas</option>
+          <option value="12">Últimas 12 horas</option>
+          <option value="24" selected>Últimas 24h</option>
+        </select>
       </label>
     </div>
     <div class="timeline-viewport">
-      <svg id="timelineSvg" viewBox="0 0 1100 520" preserveAspectRatio="none" aria-label="Línea de tiempo"></svg>
+      <div id="echartsTimeline" style="width: 100%; height: 520px;"></div>
     </div>
   </section>
 
   <section class="heatmap-section">
     <div class="section-head">
       <h2>Heatmap (promedio por hora)</h2>
-      <span class="muted">
-        Azul = bajo, Verde = medio, Rojo = alto. Cada columna es una hora de la ventana.
-      </span>
+      <span class="muted">Azul = bajo, Verde = medio, Rojo = alto.</span>
     </div>
-<div class="heatmap-fast-filter">
-  <label>Rango rápido (solo Heatmap)</label>
-  <select id="heatmapQuick"><option value="1">Última hora</option><option value="3">Últimas 3 horas</option><option value="6">Últimas 6 horas</option><option value="12">Últimas 12 horas</option><option value="24" selected>Últimas 24h</option></select>
-</div>
-
+    <div class="heatmap-fast-filter">
+      <label>Rango rápido (solo Heatmap)</label>
+      <select id="heatmapQuick">
+        <option value="1">Última hora</option>
+        <option value="3">Últimas 3 horas</option>
+        <option value="6">Últimas 6 horas</option>
+        <option value="12">Últimas 12 horas</option>
+        <option value="24" selected>Últimas 24h</option>
+      </select>
+    </div>
     <div class="hm-controls">
       <div class="hm-checks" id="hmCheckboxes"></div>
       <div class="hm-buttons">
@@ -105,21 +118,39 @@
         <button id="hmClearAll">Limpiar</button>
       </div>
     </div>
-
     <div id="heatmap" class="hm-grid"></div>
   </section>
 
   <section class="history">
     <div class="section-head">
-      <h2>Historial (Promedios por Secadora)</h2>
+      <h2>Reportes y Análisis</h2>
       <div class="tabs">
         <button class="tab active" data-tab="daily">Diario</button>
         <button class="tab" data-tab="weekly">Semanal</button>
+        <button class="tab" data-tab="shifts">Turnos (12h)</button>
+        <button class="tab" data-tab="uptime">T. Operativo</button>
+        <button class="tab" data-tab="exceptions">Excepciones</button>
+        <button class="tab" data-tab="comparative">Comparativa</button>
       </div>
     </div>
 
     <div id="historyDaily" class="history-table"></div>
     <div id="historyWeekly" class="history-table hidden"></div>
+    <div id="historyShifts" class="history-table hidden"></div>
+    <div id="reportUptime" class="history-table hidden"></div>
+    <div id="reportExceptions" class="history-table hidden"></div>
+    <div id="reportComparative" class="history-table hidden">
+      <div style="margin-bottom: 16px;">
+        <label>Comparar Secadora:</label>
+        <select id="compSecadora"></select>
+        <label style="margin-left:12px;">Día Base:</label>
+        <select id="compDayBase"></select>
+        <label style="margin-left:12px;">Día a Comparar:</label>
+        <select id="compDayTarget"></select>
+        <button id="btnCompare" style="margin-left:12px; padding:6px 12px; background:var(--card); color:var(--text); border:none; border-radius:8px;">Comparar</button>
+      </div>
+      <div id="echartsComparative" style="width: 100%; height: 400px; display:none;"></div>
+    </div>
   </section>
 
   <section class="tableSection">
@@ -134,11 +165,21 @@
 
 </div>
 
+<!-- ECharts (Reemplaza la lógica SVG pura para Timeline y Gauges) -->
+<script src="https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js"></script>
+
 <!-- libs para exportar PDF -->
 <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
 
 <!-- App -->
 <script src="app.js"></script>
+<script>
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('./sw.js')
+      .then(reg => console.log('SW Registered', reg))
+      .catch(err => console.error('SW Error', err));
+  }
+</script>
 </body>
 </html>

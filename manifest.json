@@ -1,0 +1,15 @@
+{
+  "name": "Dashboard Temperaturas",
+  "short_name": "TempDash",
+  "start_url": "./index.html",
+  "display": "standalone",
+  "background_color": "#0f1117",
+  "theme_color": "#0f1117",
+  "icons": [
+    {
+      "src": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAxMDAgMTAwIj48dGV4dCB5PSIuOWVtIiBmb250LXNpemU9IjkwIj7wn4OhPC90ZXh0Pjwvc3ZnPg==",
+      "type": "image/svg+xml",
+      "sizes": "any"
+    }
+  ]
+}
