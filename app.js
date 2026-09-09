@@ -27,8 +27,8 @@ const TURSO_CONFIG = {
 
 let activeBackend = localStorage.getItem("ds_backend") || "turso"; // "turso" o "firebase"
 
-const FAST_LOAD_ROWS_LIMIT = 2500; // ~3 a 5 días de lecturas recientes (~300 KB vs 28 MB)
-const REFRESH_ROWS_LIMIT = 100;     // Filas recientes en cada refresco (~15 KB)
+const FAST_LOAD_ROWS_LIMIT = 20000; // Cubre ~14 días de lecturas minuto a minuto
+const REFRESH_ROWS_LIMIT = 200;      // Filas recientes en cada refresco (~20 KB)
 
 let dataColumns = [];
 let dataRows = [];
@@ -609,7 +609,8 @@ function renderHistoryTables() {
    TABLA DATOS RAW
 ================================*/
 function renderTable() {
-  const rows = getQuickRows();
+  // Mostrar la fecha y hora más actual arriba
+  const rows = getQuickRows().slice().reverse();
   document.getElementById("tableHead").innerHTML = `<tr>${dataColumns.map((c) => `<th>${c}</th>`).join("")}</tr>`;
   document.getElementById("tableBody").innerHTML = rows.map((r) => {
       return `<tr>${dataColumns.map((c) => {
@@ -958,7 +959,13 @@ function applyDatasetData(json, { resetSelections = true } = {}) {
     return;
   }
   
-  dataColumns = json.columns || []; dataRows = json.rows || [];
+  dataColumns = json.columns || [];
+  // Ordenar cronológicamente para que gráficos y líneas de tiempo fluyan del pasado al presente
+  dataRows = (json.rows || []).slice().sort((a, b) => {
+    const tsA = parseDotNetDate(a["Time_Stamp"])?.getTime() || 0;
+    const tsB = parseDotNetDate(b["Time_Stamp"])?.getTime() || 0;
+    return tsA - tsB;
+  });
   secadoras = dataColumns.filter((c) => { const l = c.toLowerCase(); return l.includes("secadora") || l.includes("vertical"); });
   availableDates = getAvailableDates(dataRows);
   if (selectedDate !== "all" && !availableDates.includes(selectedDate)) { selectedDate = availableDates[0] || "all"; }
@@ -1386,11 +1393,15 @@ async function loadFullHistory() {
   try {
     if (activeBackend === "turso") {
       const table = TURSO_CONFIG.tables[currentDataset];
-      const resTurso = await tursoQuery(`SELECT * FROM ${table} ORDER BY id ASC`);
+      const resTurso = await tursoQuery(`SELECT * FROM ${table} ORDER BY Time_Stamp ASC`);
       if (resTurso && resTurso.rows && resTurso.rows.length > 0) {
         hasFullHistory = true;
         dataColumns = resTurso.columns.filter(c => c !== "id");
-        dataRows = resTurso.rows;
+        dataRows = resTurso.rows.slice().sort((a, b) => {
+          const tsA = parseDotNetDate(a["Time_Stamp"])?.getTime() || 0;
+          const tsB = parseDotNetDate(b["Time_Stamp"])?.getTime() || 0;
+          return tsA - tsB;
+        });
         availableDates = getAvailableDates(dataRows);
         updateDateFilterOptions();
         renderAll();
@@ -1446,7 +1457,7 @@ async function loadDataset(key, { resetSelections = true, forceFull = false } = 
         await ensureTursoTables();
         const table = TURSO_CONFIG.tables[key];
         const limit = forceFull ? 50000 : FAST_LOAD_ROWS_LIMIT;
-        const resTurso = await tursoQuery(`SELECT * FROM ${table} ORDER BY id DESC LIMIT ${limit}`);
+        const resTurso = await tursoQuery(`SELECT * FROM ${table} ORDER BY Time_Stamp DESC LIMIT ${limit}`);
         
         if (resTurso && resTurso.rows && resTurso.rows.length > 0) {
           const rowsRev = resTurso.rows.reverse();
@@ -1518,24 +1529,21 @@ async function refreshTimeline() {
     if (activeBackend === "turso") {
       try {
         const table = TURSO_CONFIG.tables[currentDataset];
-        let lastId = 0;
-        for (let i = dataRows.length - 1; i >= 0; i--) {
-          if (dataRows[i].id) {
-            lastId = dataRows[i].id;
-            break;
-          }
+        let lastTsStr = "";
+        if (dataRows.length > 0) {
+          lastTsStr = dataRows[dataRows.length - 1]["Time_Stamp"] || "";
         }
 
-        let query = `SELECT * FROM ${table} ORDER BY id DESC LIMIT ${REFRESH_ROWS_LIMIT}`;
+        let query = `SELECT * FROM ${table} ORDER BY Time_Stamp DESC LIMIT ${REFRESH_ROWS_LIMIT}`;
         let args = [];
-        if (lastId > 0) {
-          query = `SELECT * FROM ${table} WHERE id > ? ORDER BY id ASC LIMIT 200`;
-          args = [lastId];
+        if (lastTsStr) {
+          query = `SELECT * FROM ${table} WHERE Time_Stamp > ? ORDER BY Time_Stamp ASC LIMIT 200`;
+          args = [lastTsStr];
         }
 
         const resTurso = await tursoQuery(query, args);
         if (resTurso && resTurso.rows && resTurso.rows.length > 0) {
-          const incoming = lastId > 0 ? resTurso.rows : resTurso.rows.reverse();
+          const incoming = lastTsStr ? resTurso.rows : resTurso.rows.reverse();
           const existingTimestamps = new Set(dataRows.map(r => r["Time_Stamp"]));
           const freshRows = incoming.filter(r => r["Time_Stamp"] && !existingTimestamps.has(r["Time_Stamp"]));
 
