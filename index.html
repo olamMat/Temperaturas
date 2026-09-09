@@ -30,7 +30,7 @@
       <button id="btnTvMode" title="Modo TV Kiosko">📺 Modo TV</button>
       <button id="toggleTheme" title="Cambiar tema">🌓 Tema</button>
       <button id="exportPDF" title="Exportar PDF">📄 Exportar PDF</button>
-      <button id="downloadCSV" title="Descargar CSV">⬇️ CSV</button>
+      <button id="downloadExcel" title="Descargar reporte completo en Excel (.xlsx)">📊 Descargar Excel</button>
     </div>
   </header>
 
@@ -129,7 +129,7 @@
         <button class="tab" data-tab="weekly">Semanal</button>
         <button class="tab" data-tab="shifts">Turnos (12h)</button>
         <button class="tab" data-tab="uptime">T. Operativo</button>
-        <button class="tab" data-tab="exceptions">Excepciones</button>
+        <button class="tab" data-tab="exceptions">⚠️ Sobrecalentamiento</button>
         <button class="tab" data-tab="comparative">Comparativa</button>
       </div>
     </div>
@@ -165,12 +165,97 @@
 
 </div>
 
+<!-- Modal Configuración de Alertas (WhatsApp y Telegram) -->
+<div id="alertModal" class="modal-backdrop" style="display:none;">
+  <div class="modal-card">
+    <div class="modal-head">
+      <h3>🔔 Configurar Alertas de Sobrecalentamiento</h3>
+      <button id="closeAlertModal" class="modal-close-btn">&times;</button>
+    </div>
+    <div class="modal-body">
+      <p class="muted" style="margin-top:0;">Recibe alertas inmediatas en tu teléfono cuando una secadora alcance o supere el umbral crítico.</p>
+      
+      <div class="modal-field">
+        <label><strong>Umbral de Alerta (°C):</strong></label>
+        <input type="number" id="cfgAlertThreshold" value="60" min="30" max="100" style="width:100px;">
+      </div>
+
+      <hr style="border:none; border-top:1px solid var(--muted); opacity:0.2; margin:16px 0;">
+
+      <!-- Telegram -->
+      <div class="channel-block">
+        <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:8px;">
+          <label style="font-weight:700; display:flex; align-items:center; gap:8px;">
+            <input type="checkbox" id="cfgTgEnabled"> ✈️ Alertas por Telegram
+          </label>
+          <span class="badge-rec">Recomendado</span>
+        </div>
+        <div class="channel-inputs">
+          <div class="modal-field">
+            <label class="muted">Bot Token:</label>
+            <input type="text" id="cfgTgToken" placeholder="Ej: 123456789:ABCdefGhIJKlmNoPQRsTUVwxyZ">
+          </div>
+          <div class="modal-field">
+            <label class="muted">Chat ID (usuario o grupo):</label>
+            <input type="text" id="cfgTgChatId" placeholder="Ej: -100123456789 o 987654321">
+          </div>
+          <button id="btnTestTg" type="button" class="btn-sm">🧪 Probar Telegram</button>
+        </div>
+      </div>
+
+      <hr style="border:none; border-top:1px solid var(--muted); opacity:0.2; margin:16px 0;">
+
+      <!-- WhatsApp (OpenWA Gateway) -->
+      <div class="channel-block">
+        <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:8px;">
+          <label style="font-weight:700; display:flex; align-items:center; gap:8px;">
+            <input type="checkbox" id="cfgWaEnabled"> 💬 Alertas por WhatsApp (OpenWA Gateway)
+          </label>
+          <span class="badge-rec">Self-Hosted</span>
+        </div>
+        <div class="channel-inputs">
+          <div class="modal-field">
+            <label class="muted">URL Servidor OpenWA:</label>
+            <input type="text" id="cfgOpenwaUrl" placeholder="Ej: http://localhost:2785">
+          </div>
+          <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+            <div class="modal-field">
+              <label class="muted">Nombre de Sesión (Session ID):</label>
+              <input type="text" id="cfgOpenwaSession" placeholder="Ej: default o bot-secadoras">
+            </div>
+            <div class="modal-field">
+              <label class="muted">API Key de OpenWA:</label>
+              <input type="text" id="cfgOpenwaApiKey" placeholder="API Key configurada en OpenWA">
+            </div>
+          </div>
+          <div class="modal-field">
+            <label class="muted">Destino (Número internacional sin + o ID de Grupo):</label>
+            <input type="text" id="cfgOpenwaPhone" placeholder="Ej: 50588888888 o 12036302...@g.us">
+          </div>
+          <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+            <button id="btnTestWa" type="button" class="btn-sm">🧪 Probar WhatsApp (OpenWA)</button>
+            <small class="muted"><a href="https://github.com/rmyndharis/OpenWA" target="_blank" style="color:var(--accent);">Repositorio OpenWA en GitHub</a></small>
+          </div>
+        </div>
+      </div>
+
+      <div id="alertTestStatus" style="margin-top:14px; font-size:13px; font-weight:600;"></div>
+    </div>
+    <div class="modal-footer">
+      <button id="btnSaveAlertConfig" class="btn-primary">💾 Guardar Configuración</button>
+    </div>
+  </div>
+</div>
+
 <!-- ECharts (Reemplaza la lógica SVG pura para Timeline y Gauges) -->
 <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js"></script>
 
 <!-- libs para exportar PDF -->
 <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
+
+<!-- SheetJS para exportar a Excel completo (.xlsx) -->
+<script src="xlsx.full.min.js"></script>
 
 <!-- App -->
 <script src="app.js"></script>

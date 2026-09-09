@@ -1,9 +1,10 @@
-const CACHE_NAME = 'temp-dash-v2';
+const CACHE_NAME = 'temp-dash-v3';
 const urlsToCache = [
   './',
   './index.html',
   './styles.css',
-  './app.js'
+  './app.js',
+  './xlsx.full.min.js'
 ];
 
 self.addEventListener('install', event => {

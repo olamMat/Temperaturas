@@ -540,22 +540,33 @@ function renderExceptions(rows) {
     const cont = document.getElementById("reportExceptions");
     if (!rows.length) { cont.innerHTML = "<div class='muted'>Sin datos.</div>"; return; }
     
-    let html = `<tr><th>Fecha/Hora</th><th>Secadora</th><th>Temperatura</th><th>Umbral Superado</th></tr>`;
+    const cfg = getAlertConfig();
+    const threshold = Number(cfg.threshold) || 60;
+    let html = `<tr><th>Fecha/Hora</th><th>Secadora</th><th>Temperatura</th><th>Umbral Superado</th><th>Acción</th></tr>`;
     let found = false;
     
     rows.forEach(r => {
         const ts = parseDotNetDate(r["Time_Stamp"]);
         secadoras.forEach(sec => {
             const v = parseFloat(r[sec]);
-            if(isFinite(v) && v >= 60) {
+            if(isFinite(v) && v >= threshold) {
                 found = true;
-                html += `<tr><td>${ts ? ts.toLocaleString('es-NI') : ''}</td><td><strong>${sec}</strong></td><td style="color:var(--bad); font-weight:bold;">${v} °C</td><td>60 °C</td></tr>`;
+                const timeStr = ts ? ts.toLocaleString('es-NI') : '';
+                const waText = encodeURIComponent(`🚨 *ALERTA DE SOBRECALENTAMIENTO*\n🔥 *Equipo:* ${sec}\n🌡️ *Temperatura:* ${v} °C\n⚠️ *Umbral Superado:* ${threshold} °C\n🕒 *Fecha/Hora:* ${timeStr}\n🏭 *Sistema:* Dashboard de Secadoras`);
+                const waUrl = `https://api.whatsapp.com/send?text=${waText}`;
+                html += `<tr>
+                  <td>${timeStr}</td>
+                  <td><strong>${sec}</strong></td>
+                  <td style="color:var(--bad); font-weight:bold;">${v} °C</td>
+                  <td>${threshold} °C</td>
+                  <td><a href="${waUrl}" target="_blank" class="btn-wa" title="Compartir alerta por WhatsApp">📲 WhatsApp</a></td>
+                </tr>`;
             }
         });
     });
     
     if(!found) {
-        cont.innerHTML = "<div class='muted'>✅ No se registraron excepciones (>60°C) en la ventana actual.</div>";
+        cont.innerHTML = `<div class='muted'>✅ No se registraron alertas de sobrecalentamiento (≥${threshold}°C) en la ventana actual.</div>`;
     } else {
         cont.innerHTML = `<div class="table-wrapper"><table><thead>${html}</thead><tbody></tbody></table></div>`;
     }
@@ -588,16 +599,195 @@ function renderTable() {
 }
 
 /* ===============================
-   EXPORTS
+   EXPORTS (EXCEL Y PDF)
 ================================*/
+function setAutoColumnWidth(worksheet, data) {
+  if (!data || !data.length) return;
+  const colKeys = Object.keys(data[0]);
+  worksheet["!cols"] = colKeys.map((key) => {
+    let maxLen = String(key).length;
+    const sampleLimit = Math.min(data.length, 500);
+    for (let i = 0; i < sampleLimit; i++) {
+      const valStr = data[i][key] != null ? String(data[i][key]) : "";
+      if (valStr.length > maxLen) {
+        maxLen = valStr.length;
+      }
+    }
+    return { wch: Math.min(Math.max(maxLen + 3, 12), 40) };
+  });
+}
+
+function downloadExcelReport() {
+  if (typeof XLSX === "undefined") {
+    alert("Error: La librería de exportación a Excel no está disponible. Por favor recargue la página.");
+    return;
+  }
+
+  const rows = getQuickRows();
+  if (!rows || rows.length === 0) {
+    alert("No hay datos en el rango seleccionado para exportar.");
+    return;
+  }
+
+  const wb = XLSX.utils.book_new();
+
+  // 1. Hoja: Lecturas Detalladas (Ventana actual filtrada)
+  const detailedData = rows.map((r) => {
+    const rowObj = {};
+    dataColumns.forEach((col) => {
+      let v = r[col];
+      if (col === "Time_Stamp") {
+        const d = parseDotNetDate(v);
+        rowObj["Fecha y Hora"] = d ? formatLocalISO(d) : String(v ?? "");
+      } else {
+        const num = parseFloat(v);
+        rowObj[col] = !isNaN(num) && isFinite(num) ? Number(num.toFixed(2)) : (v ?? "");
+      }
+    });
+    return rowObj;
+  });
+  const wsLecturas = XLSX.utils.json_to_sheet(detailedData);
+  setAutoColumnWidth(wsLecturas, detailedData);
+  XLSX.utils.book_append_sheet(wb, wsLecturas, "Lecturas");
+
+  // 2. Hoja: Resumen KPIs por Secadora/Equipo
+  const lastTs = getLatestTimestamp(rows);
+  const since24 = lastTs ? new Date(lastTs.getTime() - 24 * 3600000) : new Date(0);
+  const totalRows = rows.length;
+
+  const kpiData = secadoras.map((sec) => {
+    let values24 = [], lastVal = null, lastValTime = null, val1hAgo = null, time1hAgo = null;
+    let activeCount = 0;
+
+    rows.forEach((r) => {
+      const ts = parseDotNetDate(r["Time_Stamp"]);
+      const v = parseFloat(r[sec]);
+      if (!isFinite(v)) return;
+
+      if (v > 0) activeCount++;
+
+      if (!lastVal || (ts && ts > lastValTime)) {
+        lastVal = v;
+        lastValTime = ts;
+      }
+      if (ts && ts >= since24) {
+        values24.push(v);
+      }
+      if (lastTs) {
+        const ts1h = new Date(lastTs.getTime() - 3600000);
+        if (ts && ts <= ts1h && v !== 0 && (!time1hAgo || ts > time1hAgo)) {
+          val1hAgo = v;
+          time1hAgo = ts;
+        }
+      }
+    });
+
+    const s = stats(values24);
+    const pctUptime = totalRows ? Number(((activeCount / totalRows) * 100).toFixed(1)) : 0;
+
+    let tendencia = "Estable";
+    if (val1hAgo != null && lastVal != null) {
+      if (lastVal > val1hAgo) tendencia = "Subiendo";
+      else if (lastVal < val1hAgo) tendencia = "Bajando";
+    }
+
+    let estado = "Normal (<50°C)";
+    if (lastVal >= 60) estado = "Crítico (>=60°C)";
+    else if (lastVal >= 50) estado = "Advertencia (50-59°C)";
+
+    return {
+      "Secadora / Equipo": sec,
+      "Última Temp (°C)": lastVal != null ? Number(lastVal.toFixed(2)) : "—",
+      "Promedio Ventana (°C)": s.avg != null ? Number(s.avg.toFixed(2)) : "—",
+      "Mínimo (°C)": s.min != null ? Number(s.min.toFixed(2)) : "—",
+      "Máximo (°C)": s.max != null ? Number(s.max.toFixed(2)) : "—",
+      "Lecturas Activas (>0°C)": activeCount,
+      "Lecturas Totales": totalRows,
+      "% Tiempo Operativo": `${pctUptime}%`,
+      "Tendencia Reciente": tendencia,
+      "Estado": estado
+    };
+  });
+  const wsKPI = XLSX.utils.json_to_sheet(kpiData);
+  setAutoColumnWidth(wsKPI, kpiData);
+  XLSX.utils.book_append_sheet(wb, wsKPI, "Resumen KPIs");
+
+  // 3. Hoja: Promedios Diarios
+  const { daily, shifts } = groupByMultiple(rows);
+  const dailyData = [...daily.keys()].sort((a, b) => b.localeCompare(a)).map((dayKey) => {
+    const obj = daily.get(dayKey) || {};
+    const rowObj = { "Fecha": dayKey };
+    secadoras.forEach((sec) => {
+      const arr = obj[sec] || [];
+      const avg = arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : null;
+      rowObj[sec] = avg != null ? Number(avg.toFixed(2)) : "—";
+    });
+    return rowObj;
+  });
+  if (dailyData.length > 0) {
+    const wsDaily = XLSX.utils.json_to_sheet(dailyData);
+    setAutoColumnWidth(wsDaily, dailyData);
+    XLSX.utils.book_append_sheet(wb, wsDaily, "Promedios Diarios");
+  }
+
+  // 4. Hoja: Turnos (12h)
+  const shiftsData = [...shifts.keys()].sort((a, b) => b.localeCompare(a)).map((shKey) => {
+    const obj = shifts.get(shKey) || {};
+    const rowObj = { "Turno": shKey };
+    secadoras.forEach((sec) => {
+      const arr = obj[sec] || [];
+      const avg = arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : null;
+      rowObj[sec] = avg != null ? Number(avg.toFixed(2)) : "—";
+    });
+    return rowObj;
+  });
+  if (shiftsData.length > 0) {
+    const wsShifts = XLSX.utils.json_to_sheet(shiftsData);
+    setAutoColumnWidth(wsShifts, shiftsData);
+    XLSX.utils.book_append_sheet(wb, wsShifts, "Turnos 12h");
+  }
+
+  // 5. Hoja: Alertas de Sobrecalentamiento
+  const cfg = getAlertConfig();
+  const alertThreshold = Number(cfg.threshold) || 60;
+  const exceptionsData = [];
+  rows.forEach((r) => {
+    const ts = parseDotNetDate(r["Time_Stamp"]);
+    secadoras.forEach((sec) => {
+      const v = parseFloat(r[sec]);
+      if (isFinite(v) && v >= alertThreshold) {
+        exceptionsData.push({
+          "Fecha y Hora": ts ? formatLocalISO(ts) : "",
+          "Secadora / Equipo": sec,
+          "Temperatura (°C)": Number(v.toFixed(2)),
+          "Umbral Máximo (°C)": alertThreshold,
+          "Exceso (°C)": Number((v - alertThreshold).toFixed(2)),
+          "Severidad": "Sobrecalentamiento"
+        });
+      }
+    });
+  });
+  const wsExceptions = exceptionsData.length > 0
+    ? XLSX.utils.json_to_sheet(exceptionsData)
+    : XLSX.utils.json_to_sheet([{ "Estado": "Sin alertas", "Detalle": `No se registraron temperaturas mayores o iguales a ${alertThreshold}°C en la ventana seleccionada.` }]);
+  setAutoColumnWidth(wsExceptions, exceptionsData.length > 0 ? exceptionsData : [{ "Estado": "", "Detalle": "" }]);
+  XLSX.utils.book_append_sheet(wb, wsExceptions, "Sobrecalentamiento");
+
+  // Nombre de archivo descriptivo
+  const dsLabel = DATASETS[currentDataset]?.label || (currentDataset === "verticales" ? "Verticales" : "Secadoras");
+  const cleanLabel = dsLabel.replace(/[^a-zA-Z0-9_-]/g, "_");
+  const dateStr = selectedDate !== "all" ? selectedDate : "Historico";
+  const now = new Date();
+  const pad = (n) => String(n).padStart(2, "0");
+  const timestamp = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}_${pad(now.getHours())}${pad(now.getMinutes())}`;
+  const fileName = `Reporte_${cleanLabel}_${dateStr}_${timestamp}.xlsx`;
+
+  XLSX.writeFile(wb, fileName);
+}
+
+// Mantenemos la función CSV por si se requiere como respaldo
 function downloadCSVCurrentFilter() {
-  const rows = getQuickRows(); const headers = dataColumns.join(",");
-  const body = rows.map((r) => dataColumns.map((c) => {
-      let v = r[c]; if (c === "Time_Stamp") { const d = parseDotNetDate(v); v = d ? formatLocalISO(d) : v; }
-      const s = String(v ?? ""); return s.includes(",") || s.includes('"') ? `"${s.replaceAll('"', '""')}"` : s;
-    }).join(",")).join("\n");
-  const blob = new Blob([headers + "\n" + body], { type: "text/csv" });
-  const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = "datos.csv"; a.click(); URL.revokeObjectURL(a.href);
+  downloadExcelReport();
 }
 
 async function exportPDF() {
@@ -749,6 +939,206 @@ function applyDatasetData(json, { resetSelections = true } = {}) {
   document.getElementById("lastUpdated").textContent = "Actualizado: " + new Date().toLocaleString();
   document.getElementById("datasetTitle").textContent = DATASETS[currentDataset]?.label || "Secadoras";
   renderAll();
+  evaluateRealtimeAlerts(dataRows);
+}
+
+/* ===============================
+   ALERTAS Y NOTIFICACIONES (TELEGRAM / OPENWA)
+================================*/
+const DEFAULT_ALERT_CONFIG = {
+  threshold: 60,
+  tgEnabled: false,
+  tgToken: "",
+  tgChatId: "",
+  waEnabled: false,
+  openwaUrl: "http://localhost:2785",
+  openwaSession: "default",
+  openwaApiKey: "",
+  openwaPhone: ""
+};
+
+function getAlertConfig() {
+  try {
+    const saved = localStorage.getItem("alert_config");
+    return saved ? { ...DEFAULT_ALERT_CONFIG, ...JSON.parse(saved) } : { ...DEFAULT_ALERT_CONFIG };
+  } catch (e) {
+    return { ...DEFAULT_ALERT_CONFIG };
+  }
+}
+
+function saveAlertConfig(cfg) {
+  localStorage.setItem("alert_config", JSON.stringify(cfg));
+}
+
+const lastAlertSentTime = new Map();
+const ALERT_COOLDOWN_MS = 30 * 60 * 1000; // 30 minutos de espera entre alertas repetidas por secadora
+
+async function sendTelegramAlert(message, cfg) {
+  if (!cfg.tgToken || !cfg.tgChatId) return false;
+  try {
+    const url = `https://api.telegram.org/bot${cfg.tgToken}/sendMessage`;
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        chat_id: cfg.tgChatId,
+        text: message,
+        parse_mode: "HTML"
+      })
+    });
+    return res.ok;
+  } catch (err) {
+    console.error("Error enviando Telegram:", err);
+    return false;
+  }
+}
+
+async function sendWhatsAppAlert(message, cfg) {
+  if (!cfg.openwaUrl || !cfg.openwaSession || !cfg.openwaPhone) return false;
+  try {
+    const baseUrl = cfg.openwaUrl.trim().replace(/\/+$/, "");
+    const session = encodeURIComponent(cfg.openwaSession.trim());
+    const rawDest = cfg.openwaPhone.trim();
+    // Si ya incluye @ (ej: @c.us o @g.us), usarlo tal cual; sino agregar @c.us
+    const chatId = rawDest.includes("@") ? rawDest : `${rawDest.replace(/\D/g, "")}@c.us`;
+
+    const url = `${baseUrl}/api/sessions/${session}/messages/send-text`;
+    const headers = { "Content-Type": "application/json" };
+    if (cfg.openwaApiKey && cfg.openwaApiKey.trim()) {
+      headers["X-API-Key"] = cfg.openwaApiKey.trim();
+    }
+
+    const res = await fetch(url, {
+      method: "POST",
+      headers: headers,
+      body: JSON.stringify({
+        chatId: chatId,
+        text: message
+      })
+    });
+    return res.ok;
+  } catch (err) {
+    console.error("Error enviando WhatsApp OpenWA:", err);
+    return false;
+  }
+}
+
+let audioCtx = null;
+function getAudioContext() {
+  if (!audioCtx) {
+    const AudioContext = window.AudioContext || window.webkitAudioContext;
+    if (AudioContext) {
+      audioCtx = new AudioContext();
+    }
+  }
+  if (audioCtx && audioCtx.state === "suspended") {
+    audioCtx.resume();
+  }
+  return audioCtx;
+}
+
+// Desbloquear AudioContext en la interacción del usuario
+document.addEventListener("click", () => {
+  getAudioContext();
+}, { once: false });
+
+function playAlertSound() {
+  try {
+    const ctx = getAudioContext();
+    if (!ctx) return;
+
+    // Tono de alarma industrial: 4 pulsos sonoros
+    const playTone = (startDelay, freq, duration) => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = "sine";
+      osc.frequency.setValueAtTime(freq, ctx.currentTime + startDelay);
+      gain.gain.setValueAtTime(0.3, ctx.currentTime + startDelay);
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + startDelay + duration);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start(ctx.currentTime + startDelay);
+      osc.stop(ctx.currentTime + startDelay + duration);
+    };
+
+    playTone(0, 880, 0.22);
+    playTone(0.28, 1174, 0.3);
+    playTone(0.65, 880, 0.22);
+    playTone(0.93, 1174, 0.4);
+  } catch (e) {
+    console.warn("Audio de alerta silenciado por el navegador:", e);
+  }
+}
+
+function showBrowserNotification(title, body) {
+  if ("Notification" in window && Notification.permission === "granted") {
+    new Notification(title, { body, icon: "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🔥</text></svg>" });
+  }
+}
+
+async function evaluateRealtimeAlerts(rows) {
+  if (!rows || !rows.length) return;
+
+  const cfg = getAlertConfig();
+  const threshold = Number(cfg.threshold) || 60;
+  const now = Date.now();
+  const dsName = DATASETS[currentDataset]?.label || (currentDataset === "verticales" ? "Secadoras Verticales" : "Secadoras");
+
+  // Obtener lectura más reciente por cada secadora
+  const latestBySec = {};
+  rows.forEach((r) => {
+    const ts = parseDotNetDate(r["Time_Stamp"]);
+    if (!ts) return;
+    secadoras.forEach((sec) => {
+      const v = parseFloat(r[sec]);
+      if (isFinite(v)) {
+        if (!latestBySec[sec] || ts > latestBySec[sec].ts) {
+          latestBySec[sec] = { ts, temp: v };
+        }
+      }
+    });
+  });
+
+  let shouldPlaySound = false;
+
+  for (const sec of secadoras) {
+    const item = latestBySec[sec];
+    if (!item) continue;
+    if (item.temp >= threshold) {
+      const lastSent = lastAlertSentTime.get(sec) || 0;
+      // Sonar alarma con intervalo de 5 minutos por secadora
+      if (now - lastSent >= 5 * 60 * 1000) {
+        lastAlertSentTime.set(sec, now);
+        shouldPlaySound = true;
+
+        const timeStr = formatLocalISO(item.ts);
+        showBrowserNotification(`🔥 Sobrecalentamiento en ${sec}`, `Temperatura: ${item.temp}°C (Umbral: ${threshold}°C) a las ${timeStr}`);
+
+        if (cfg.tgEnabled) {
+          const tgMsg = `🚨 <b>ALERTA DE SOBRECALENTAMIENTO</b>\n\n` +
+            `🔥 <b>Equipo:</b> ${sec}\n` +
+            `🌡️ <b>Temperatura:</b> ${item.temp} °C\n` +
+            `⚠️ <b>Umbral Crítico:</b> ${threshold} °C\n` +
+            `🕒 <b>Hora:</b> ${timeStr}\n` +
+            `🏭 <b>Planta:</b> ${dsName}`;
+          sendTelegramAlert(tgMsg, cfg);
+        }
+        if (cfg.waEnabled) {
+          const waMsg = `🚨 *ALERTA DE SOBRECALENTAMIENTO*\n\n` +
+            `🔥 *Equipo:* ${sec}\n` +
+            `🌡️ *Temperatura:* ${item.temp} °C\n` +
+            `⚠️ *Umbral Crítico:* ${threshold} °C\n` +
+            `🕒 *Hora:* ${timeStr}\n` +
+            `🏭 *Planta:* ${dsName}`;
+          sendWhatsAppAlert(waMsg, cfg);
+        }
+      }
+    }
+  }
+
+  if (shouldPlaySound) {
+    playAlertSound();
+  }
 }
 
 async function loadDataset(key, { resetSelections = true } = {}) {
@@ -773,6 +1163,7 @@ async function refreshTimeline() {
     renderTimeline();
     // In Tv Mode, we might want to refresh cards too without breaking the scroll
     if(document.body.classList.contains('tv-mode')) renderCards();
+    evaluateRealtimeAlerts(dataRows);
   } catch (e) { console.error("Error refrescando timeline:", e); }
 }
 
@@ -797,7 +1188,8 @@ document.addEventListener("DOMContentLoaded", () => {
     });
   });
 
-  document.getElementById("downloadCSV").onclick = downloadCSVCurrentFilter;
+  const btnExcel = document.getElementById("downloadExcel") || document.getElementById("downloadCSV");
+  if (btnExcel) btnExcel.onclick = downloadExcelReport;
   document.getElementById("exportPDF").onclick = exportPDF;
 
   document.querySelectorAll(".tab").forEach((btn) => {
@@ -813,6 +1205,151 @@ document.addEventListener("DOMContentLoaded", () => {
       if(tab === "comparative" && comparativeChart) comparativeChart.resize();
     });
   });
+
+  // Configuración de Notificaciones (Telegram / WhatsApp)
+  const alertModal = document.getElementById("alertModal");
+  const btnAlertSettings = document.getElementById("btnAlertSettings");
+  const closeAlertModal = document.getElementById("closeAlertModal");
+  const btnSaveAlertConfig = document.getElementById("btnSaveAlertConfig");
+  const btnTestTg = document.getElementById("btnTestTg");
+  const btnTestWa = document.getElementById("btnTestWa");
+  const alertTestStatus = document.getElementById("alertTestStatus");
+
+  function populateAlertModal() {
+    const cfg = getAlertConfig();
+    const elTh = document.getElementById("cfgAlertThreshold");
+    if (elTh) elTh.value = cfg.threshold ?? 60;
+    const elTgEn = document.getElementById("cfgTgEnabled");
+    if (elTgEn) elTgEn.checked = !!cfg.tgEnabled;
+    const elTgTok = document.getElementById("cfgTgToken");
+    if (elTgTok) elTgTok.value = cfg.tgToken || "";
+    const elTgChat = document.getElementById("cfgTgChatId");
+    if (elTgChat) elTgChat.value = cfg.tgChatId || "";
+    const elWaEn = document.getElementById("cfgWaEnabled");
+    if (elWaEn) elWaEn.checked = !!cfg.waEnabled;
+    const elWaUrl = document.getElementById("cfgOpenwaUrl");
+    if (elWaUrl) elWaUrl.value = cfg.openwaUrl || "http://localhost:2785";
+    const elWaSession = document.getElementById("cfgOpenwaSession");
+    if (elWaSession) elWaSession.value = cfg.openwaSession || "default";
+    const elWaKey = document.getElementById("cfgOpenwaApiKey");
+    if (elWaKey) elWaKey.value = cfg.openwaApiKey || "";
+    const elWaPh = document.getElementById("cfgOpenwaPhone");
+    if (elWaPh) elWaPh.value = cfg.openwaPhone || "";
+    if (alertTestStatus) alertTestStatus.textContent = "";
+  }
+
+  if (btnAlertSettings) {
+    btnAlertSettings.onclick = () => {
+      populateAlertModal();
+      if (alertModal) alertModal.style.display = "flex";
+    };
+  }
+
+  if (closeAlertModal) {
+    closeAlertModal.onclick = () => {
+      if (alertModal) alertModal.style.display = "none";
+    };
+  }
+
+  if (alertModal) {
+    alertModal.onclick = (e) => {
+      if (e.target === alertModal) alertModal.style.display = "none";
+    };
+  }
+
+  if (btnSaveAlertConfig) {
+    btnSaveAlertConfig.onclick = async () => {
+      const cfg = {
+        threshold: parseFloat(document.getElementById("cfgAlertThreshold").value) || 60,
+        tgEnabled: document.getElementById("cfgTgEnabled").checked,
+        tgToken: document.getElementById("cfgTgToken").value.trim(),
+        tgChatId: document.getElementById("cfgTgChatId").value.trim(),
+        waEnabled: document.getElementById("cfgWaEnabled").checked,
+        openwaUrl: document.getElementById("cfgOpenwaUrl").value.trim() || "http://localhost:2785",
+        openwaSession: document.getElementById("cfgOpenwaSession").value.trim() || "default",
+        openwaApiKey: document.getElementById("cfgOpenwaApiKey").value.trim(),
+        openwaPhone: document.getElementById("cfgOpenwaPhone").value.trim()
+      };
+      saveAlertConfig(cfg);
+
+      if ("Notification" in window && Notification.permission === "default") {
+        try { await Notification.requestPermission(); } catch (e) {}
+      }
+
+      if (alertTestStatus) {
+        alertTestStatus.style.color = "var(--good)";
+        alertTestStatus.textContent = "✅ Configuración guardada correctamente.";
+      }
+      setTimeout(() => {
+        if (alertModal) alertModal.style.display = "none";
+        renderHistoryTables();
+      }, 1000);
+    };
+  }
+
+  if (btnTestTg) {
+    btnTestTg.onclick = async () => {
+      if (alertTestStatus) {
+        alertTestStatus.style.color = "var(--text)";
+        alertTestStatus.textContent = "⏳ Enviando prueba a Telegram...";
+      }
+      const testCfg = {
+        tgToken: document.getElementById("cfgTgToken").value.trim(),
+        tgChatId: document.getElementById("cfgTgChatId").value.trim()
+      };
+      if (!testCfg.tgToken || !testCfg.tgChatId) {
+        if (alertTestStatus) {
+          alertTestStatus.style.color = "var(--bad)";
+          alertTestStatus.textContent = "❌ Ingrese el Bot Token y Chat ID de Telegram.";
+        }
+        return;
+      }
+      const msg = `🧪 <b>Prueba de Alerta Exitosa</b>\nEl Dashboard de Secadoras se ha conectado correctamente con Telegram.`;
+      const ok = await sendTelegramAlert(msg, testCfg);
+      if (alertTestStatus) {
+        if (ok) {
+          alertTestStatus.style.color = "var(--good)";
+          alertTestStatus.textContent = "✅ ¡Mensaje enviado con éxito a Telegram!";
+        } else {
+          alertTestStatus.style.color = "var(--bad)";
+          alertTestStatus.textContent = "❌ Error al enviar. Verifique su Bot Token y Chat ID.";
+        }
+      }
+    };
+  }
+
+  if (btnTestWa) {
+    btnTestWa.onclick = async () => {
+      if (alertTestStatus) {
+        alertTestStatus.style.color = "var(--text)";
+        alertTestStatus.textContent = "⏳ Conectando con OpenWA Gateway...";
+      }
+      const testCfg = {
+        openwaUrl: document.getElementById("cfgOpenwaUrl").value.trim() || "http://localhost:2785",
+        openwaSession: document.getElementById("cfgOpenwaSession").value.trim() || "default",
+        openwaApiKey: document.getElementById("cfgOpenwaApiKey").value.trim(),
+        openwaPhone: document.getElementById("cfgOpenwaPhone").value.trim()
+      };
+      if (!testCfg.openwaUrl || !testCfg.openwaSession || !testCfg.openwaPhone) {
+        if (alertTestStatus) {
+          alertTestStatus.style.color = "var(--bad)";
+          alertTestStatus.textContent = "❌ Complete la URL de OpenWA, el Nombre de Sesión y el Destino.";
+        }
+        return;
+      }
+      const msg = `🧪 *Prueba de Alerta Exitosa*\nEl Dashboard de Secadoras se ha conectado correctamente con OpenWA Gateway.`;
+      const ok = await sendWhatsAppAlert(msg, testCfg);
+      if (alertTestStatus) {
+        if (ok) {
+          alertTestStatus.style.color = "var(--good)";
+          alertTestStatus.textContent = "✅ ¡Mensaje enviado con éxito vía OpenWA Gateway!";
+        } else {
+          alertTestStatus.style.color = "var(--bad)";
+          alertTestStatus.textContent = "❌ No se pudo conectar a OpenWA. Verifique que el servidor esté activo, la sesión conectada y la API Key.";
+        }
+      }
+    };
+  }
 
   setInterval(refreshTimeline, 5 * 60 * 1000);
 });
