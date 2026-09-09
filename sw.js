@@ -1,4 +1,4 @@
-const CACHE_NAME = 'temp-dash-v3';
+const CACHE_NAME = 'temp-dash-v5';
 const urlsToCache = [
   './',
   './index.html',

@@ -5,14 +5,30 @@ const DATASETS = {
   horizontales: {
     label: "Secadoras",
     url: "https://temperaturas-dashboard-default-rtdb.firebaseio.com/ReporteTemperaturas.json",
+    baseUrl: "https://temperaturas-dashboard-default-rtdb.firebaseio.com/ReporteTemperaturas",
     hornos: true,
   },
   verticales: {
     label: "Secadoras Verticales",
     url: "https://temperaturas-dashboard-default-rtdb.firebaseio.com/ReporteVerticales.json",
+    baseUrl: "https://temperaturas-dashboard-default-rtdb.firebaseio.com/ReporteVerticales",
     hornos: false,
   },
 };
+
+const TURSO_CONFIG = {
+  url: "https://temperaturas-db-olam.aws-us-east-1.turso.io",
+  token: "eyJhbGciOiJFZERTQSIsInR5cCI6IkpXVCJ9.eyJhIjoicnciLCJpYXQiOjE3ODg5NzYzNTQsImlkIjoiMDFhMDg3NGItNTQwMS03M2YyLTkxOTgtZjlhZGEyNDE4OGM2Iiwia2lkIjoiY0RqOXp4aUJQbnRqY2k0THNTZ25GdWpPR3B1ZGpDSHR2aDNhOVRHNG1ZQSIsInJpZCI6ImE3ZmY5OGQyLTdjZWYtNDU0Ni1iZWUxLTZkOWI4MjJiOTQ4ZCJ9.UDLMI1_55Ol9LMZnuhpkIxATbpzEKmB77vEo8n57tLc1825AtQL15RVKrVPVSc0FqlmKps3AEsfOzHH93FOGDg",
+  tables: {
+    horizontales: "ReporteTemperaturas",
+    verticales: "ReporteVerticales",
+  }
+};
+
+let activeBackend = localStorage.getItem("ds_backend") || "turso"; // "turso" o "firebase"
+
+const FAST_LOAD_ROWS_LIMIT = 2500; // ~3 a 5 días de lecturas recientes (~300 KB vs 28 MB)
+const REFRESH_ROWS_LIMIT = 100;     // Filas recientes en cada refresco (~15 KB)
 
 let dataColumns = [];
 let dataRows = [];
@@ -20,6 +36,9 @@ let secadoras = [];
 let availableDates = [];
 let selectedDate = "all";
 let currentDataset = "horizontales";
+let hasFullHistory = false;
+let isRefreshing = false;
+let lastRefreshTime = Date.now();
 
 let selectedHeatmap = new Set();
 let selectedTimeline = new Set();
@@ -143,8 +162,12 @@ function getHeatmapRows() {
 function updateDateFilterOptions() {
   const sel = document.getElementById("dateFilter");
   if (!sel) return;
-  sel.innerHTML = `<option value="all">Todas las fechas</option>` +
+  let optionsHtml = `<option value="all">Todas las fechas cargadas</option>` +
     availableDates.map((d) => `<option value="${d}" ${d === selectedDate ? "selected" : ""}>${d}</option>`).join("");
+  if (!hasFullHistory) {
+    optionsHtml += `<option value="__load_all__">📥 Cargar más fechas (Historial completo)...</option>`;
+  }
+  sel.innerHTML = optionsHtml;
   sel.value = selectedDate || "all";
 }
 
@@ -617,10 +640,20 @@ function setAutoColumnWidth(worksheet, data) {
   });
 }
 
-function downloadExcelReport() {
+async function downloadExcelReport() {
   if (typeof XLSX === "undefined") {
     alert("Error: La librería de exportación a Excel no está disponible. Por favor recargue la página.");
     return;
+  }
+
+  if (!hasFullHistory && selectedDate === "all") {
+    const wantFull = confirm(
+      "Actualmente solo están cargadas en memoria las lecturas recientes (~3 a 5 días) para optimizar el consumo de datos.\n\n" +
+      "¿Deseas descargar el historial completo de meses anteriores antes de generar el Excel?"
+    );
+    if (wantFull) {
+      await loadFullHistory();
+    }
   }
 
   const rows = getQuickRows();
@@ -1141,30 +1174,446 @@ async function evaluateRealtimeAlerts(rows) {
   }
 }
 
-async function loadDataset(key, { resetSelections = true } = {}) {
-  currentDataset = key;
+function updateBackendButtonState() {
+  const btn = document.getElementById("btnBackendSwitch");
+  if (!btn) return;
+  if (activeBackend === "turso") {
+    btn.textContent = "☁️ Base de Datos: Turso";
+    btn.style.borderColor = "var(--good)";
+    btn.style.color = "var(--good)";
+  } else {
+    btn.textContent = "🔥 Base de Datos: Firebase";
+    btn.style.borderColor = "var(--warn)";
+    btn.style.color = "var(--warn)";
+  }
+}
+
+async function tursoQuery(sql, args = []) {
+  const endpoint = `${TURSO_CONFIG.url}/v2/pipeline`;
+  const res = await fetch(endpoint, {
+    method: "POST",
+    headers: {
+      "Authorization": `Bearer ${TURSO_CONFIG.token}`,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      requests: [
+        {
+          type: "execute",
+          stmt: {
+            sql: sql,
+            args: args.map(a => {
+              if (a === null || a === undefined) return { type: "null" };
+              if (typeof a === "number") return { type: "float", value: a };
+              return { type: "text", value: String(a) };
+            })
+          }
+        },
+        { type: "close" }
+      ]
+    })
+  });
+
+  if (!res.ok) {
+    const txt = await res.text();
+    throw new Error(`Turso HTTP Error (${res.status}): ${txt}`);
+  }
+
+  const data = await res.json();
+  const first = data.results?.[0];
+  if (first?.type === "error") {
+    throw new Error(first.error?.message || "Error en Turso SQL");
+  }
+
+  const result = first?.response?.result;
+  if (!result) return { columns: [], rows: [] };
+
+  const cols = (result.cols || []).map(c => c.name);
+  const rows = (result.rows || []).map(row => {
+    const obj = {};
+    row.forEach((cell, i) => {
+      const col = cols[i];
+      let val = cell.value;
+      if (cell.type === "integer" && val != null) val = Number(val);
+      if (cell.type === "float" && val != null) val = Number(val);
+      obj[col] = val;
+    });
+    return obj;
+  });
+
+  return { columns: cols, rows: rows };
+}
+
+let tursoTablesReady = false;
+async function ensureTursoTables() {
+  if (tursoTablesReady) return;
   try {
-    const url = DATASETS[key]?.url; if (!url) throw new Error("Dataset no encontrado");
-    document.querySelectorAll(".ds-btn").forEach((b) => b.classList.toggle("active", b.dataset.dataset === key));
-    const res = await fetch(url + "?t=" + Date.now(), { cache: "no-store" });
+    await tursoQuery(`
+      CREATE TABLE IF NOT EXISTS ReporteTemperaturas (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        Time_Stamp TEXT NOT NULL,
+        "Secadora 1" REAL, "Secadora 2" REAL, "Secadora 3" REAL,
+        "Secadora 4" REAL, "Secadora 5" REAL, "Secadora 6" REAL,
+        "Secadora 7" REAL, "Secadora 8" REAL, "Secadora 9" REAL,
+        "Secadora 10" REAL, "Secadora 11" REAL, "Secadora 12" REAL,
+        "Secadora 13" REAL, "Secadora 14" REAL, "Secadora 15" REAL,
+        "Secadora 16" REAL, "Secadora 17" REAL, "Secadora 18" REAL
+      );
+    `);
+    await tursoQuery(`
+      CREATE TABLE IF NOT EXISTS ReporteVerticales (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        Time_Stamp TEXT NOT NULL,
+        "Secadora Vertical 1" REAL, "Secadora Vertical 2" REAL,
+        "Secadora Vertical 3" REAL, "Secadora Vertical 4" REAL,
+        "Secadora Vertical 5" REAL, "Secadora Vertical 6" REAL
+      );
+    `);
+    tursoTablesReady = true;
+    console.log("[Dashboard] Tablas Turso inicializadas/verificadas.");
+  } catch (err) {
+    console.warn("Aviso verificando tablas Turso:", err);
+  }
+}
+
+async function migrateFirebaseToTurso() {
+  const confirmMsg = "🚀 ¿Deseas descargar los datos de Firebase y copiarlos a tu base de datos de Turso?\n\n" +
+    "Esto transferirá el historial para que puedas usar Turso sin consumir cuota de Firebase.";
+  if (!confirm(confirmMsg)) return;
+
+  const btn = document.getElementById("btnMigrateToTurso");
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = "⏳ Migrando datos...";
+  }
+
+  const dsTitle = document.getElementById("datasetTitle");
+  const oldTitle = dsTitle ? dsTitle.textContent : "";
+
+  try {
+    await ensureTursoTables();
+    
+    const datasetsToMigrate = ["horizontales", "verticales"];
+    
+    for (const dKey of datasetsToMigrate) {
+      const ds = DATASETS[dKey];
+      const table = TURSO_CONFIG.tables[dKey];
+      if (dsTitle) dsTitle.textContent = `Descargando ${ds.label} de Firebase...`;
+      
+      const res = await fetch(ds.url);
+      const json = await res.json();
+      if (!json || !json.rows || json.rows.length === 0) continue;
+      
+      const rows = json.rows;
+      const cols = (json.columns || []).filter(c => c !== "id");
+      
+      const batchSize = 100;
+      for (let i = 0; i < rows.length; i += batchSize) {
+        const chunk = rows.slice(i, i + batchSize);
+        const reqs = chunk.map(r => {
+          const rowCols = cols.filter(c => r[c] !== undefined);
+          const colNames = rowCols.map(c => `"${c}"`).join(", ");
+          const placeholders = rowCols.map(() => "?").join(", ");
+          const vals = rowCols.map(c => r[c]);
+          return {
+            type: "execute",
+            stmt: {
+              sql: `INSERT INTO ${table} (${colNames}) VALUES (${placeholders})`,
+              args: vals.map(v => {
+                if (v === null || v === undefined) return { type: "null" };
+                if (typeof v === "number") return { type: "float", value: v };
+                return { type: "text", value: String(v) };
+              })
+            }
+          };
+        });
+        reqs.push({ type: "close" });
+
+        await fetch(`${TURSO_CONFIG.url}/v2/pipeline`, {
+          method: "POST",
+          headers: {
+            "Authorization": `Bearer ${TURSO_CONFIG.token}`,
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({ requests: reqs })
+        });
+
+        const pct = Math.round(((i + chunk.length) / rows.length) * 100);
+        if (dsTitle) dsTitle.textContent = `Migrando ${ds.label} a Turso: ${pct}% (${i + chunk.length}/${rows.length})...`;
+      }
+    }
+
+    alert("✅ ¡Migración a Turso completada con éxito!\nLos datos históricos ahora están en tu base de datos de Turso.");
+    activeBackend = "turso";
+    localStorage.setItem("ds_backend", "turso");
+    updateBackendButtonState();
+    loadDataset(currentDataset, { resetSelections: true });
+  } catch (err) {
+    console.error("Error en migración:", err);
+    alert("Error durante la migración: " + err.message);
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = "🚀 Migrar Firebase a Turso";
+    }
+    if (dsTitle) dsTitle.textContent = oldTitle;
+  }
+}
+
+function updateFullHistoryButtonState() {
+  const btn = document.getElementById("btnLoadFullHistory");
+  if (!btn) return;
+  if (hasFullHistory) {
+    btn.disabled = true;
+    btn.textContent = "✅ Historial completo";
+    btn.style.opacity = "0.6";
+  } else {
+    btn.disabled = false;
+    btn.textContent = "📥 Cargar Historial";
+    btn.style.opacity = "1";
+  }
+}
+
+async function loadFullHistory() {
+  if (hasFullHistory) return;
+  const btn = document.getElementById("btnLoadFullHistory");
+  const oldText = btn ? btn.textContent : "";
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = "⏳ Descargando historial...";
+  }
+
+  try {
+    if (activeBackend === "turso") {
+      const table = TURSO_CONFIG.tables[currentDataset];
+      const resTurso = await tursoQuery(`SELECT * FROM ${table} ORDER BY id ASC`);
+      if (resTurso && resTurso.rows && resTurso.rows.length > 0) {
+        hasFullHistory = true;
+        dataColumns = resTurso.columns.filter(c => c !== "id");
+        dataRows = resTurso.rows;
+        availableDates = getAvailableDates(dataRows);
+        updateDateFilterOptions();
+        renderAll();
+        updateFullHistoryButtonState();
+        console.log(`[Dashboard] Historial completo Turso: ${dataRows.length} registros.`);
+        return;
+      }
+    }
+
+    // Fallback Firebase
+    const ds = DATASETS[currentDataset];
+    if (!ds) return;
+    const res = await fetch(ds.url + "?t=" + Date.now(), { cache: "no-store" });
     const json = await res.json();
+    if (json && json.rows) {
+      hasFullHistory = true;
+      dataColumns = json.columns || dataColumns;
+      dataRows = json.rows || [];
+      availableDates = getAvailableDates(dataRows);
+      updateDateFilterOptions();
+      renderAll();
+      updateFullHistoryButtonState();
+      console.log(`[Dashboard] Historial completo Firebase: ${dataRows.length} registros.`);
+    }
+  } catch (e) {
+    console.error("Error al descargar historial completo:", e);
+    alert("Error al descargar historial completo: " + e.message);
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = oldText;
+    }
+  }
+}
+
+async function loadDataset(key, { resetSelections = true, forceFull = false } = {}) {
+  currentDataset = key;
+  hasFullHistory = forceFull;
+  updateFullHistoryButtonState();
+  updateBackendButtonState();
+
+  try {
+    const ds = DATASETS[key];
+    if (!ds) throw new Error("Dataset no encontrado");
+    document.querySelectorAll(".ds-btn").forEach((b) => b.classList.toggle("active", b.dataset.dataset === key));
+
+    document.getElementById("datasetTitle").textContent = "Cargando datos...";
+
+    let json = null;
+
+    // 1. Intentar con Turso si está activo
+    if (activeBackend === "turso") {
+      try {
+        await ensureTursoTables();
+        const table = TURSO_CONFIG.tables[key];
+        const limit = forceFull ? 50000 : FAST_LOAD_ROWS_LIMIT;
+        const resTurso = await tursoQuery(`SELECT * FROM ${table} ORDER BY id DESC LIMIT ${limit}`);
+        
+        if (resTurso && resTurso.rows && resTurso.rows.length > 0) {
+          const rowsRev = resTurso.rows.reverse();
+          const cleanCols = resTurso.columns.filter(c => c !== "id");
+          json = { columns: cleanCols, rows: rowsRev };
+          console.log(`[Dashboard] Datos cargados desde Turso: ${rowsRev.length} registros.`);
+        } else {
+          console.warn("[Dashboard] Turso está vacío para este dataset. Usando fallback de Firebase.");
+        }
+      } catch (errTurso) {
+        console.warn("[Dashboard] Error consultando Turso, usando fallback Firebase:", errTurso);
+      }
+    }
+
+    // 2. Fallback Firebase si Turso no devolvió datos o no está activo
+    if (!json) {
+      if (!forceFull && ds.baseUrl) {
+        try {
+          const [colsRes, rowsRes] = await Promise.all([
+            fetch(`${ds.baseUrl}/columns.json`),
+            fetch(`${ds.baseUrl}/rows.json?orderBy="$key"&limitToLast=${FAST_LOAD_ROWS_LIMIT}`)
+          ]);
+
+          if (colsRes.ok && rowsRes.ok) {
+            const cols = await colsRes.json();
+            const rawRows = await rowsRes.json();
+            if (cols && rawRows) {
+              const rowsArray = Array.isArray(rawRows) ? rawRows : Object.values(rawRows);
+              json = { columns: cols, rows: rowsArray };
+            }
+          }
+        } catch (errFast) {
+          console.warn("[Dashboard] Carga rápida Firebase no disponible:", errFast);
+        }
+      }
+
+      if (!json) {
+        const res = await fetch(ds.url + "?t=" + Date.now(), { cache: "no-store" });
+        json = await res.json();
+        hasFullHistory = true;
+        updateFullHistoryButtonState();
+      }
+    }
+
     applyDatasetData(json, { resetSelections });
-  } catch (e) { alert("Error al cargar JSON: " + e.message); console.error(e); }
+  } catch (e) {
+    alert("Error al cargar datos: " + e.message);
+    console.error(e);
+  }
 }
 
 async function refreshTimeline() {
+  if (isRefreshing) return;
+
+  if (document.hidden && !document.body.classList.contains("tv-mode")) {
+    return;
+  }
+
+  isRefreshing = true;
+  lastRefreshTime = Date.now();
+
   try {
-    const url = DATASETS[currentDataset]?.url; if (!url) return;
-    const res = await fetch(url + "?t=" + Date.now(), { cache: "no-store" });
-    const json = await res.json();
-    dataRows = json.rows; availableDates = getAvailableDates(dataRows);
-    if (selectedDate !== "all" && !availableDates.includes(selectedDate)) { selectedDate = availableDates[0] || "all"; }
-    updateDateFilterOptions();
-    renderTimeline();
-    // In Tv Mode, we might want to refresh cards too without breaking the scroll
-    if(document.body.classList.contains('tv-mode')) renderCards();
-    evaluateRealtimeAlerts(dataRows);
-  } catch (e) { console.error("Error refrescando timeline:", e); }
+    const ds = DATASETS[currentDataset];
+    if (!ds) return;
+
+    let refreshed = false;
+
+    // Refresco con Turso
+    if (activeBackend === "turso") {
+      try {
+        const table = TURSO_CONFIG.tables[currentDataset];
+        let lastId = 0;
+        for (let i = dataRows.length - 1; i >= 0; i--) {
+          if (dataRows[i].id) {
+            lastId = dataRows[i].id;
+            break;
+          }
+        }
+
+        let query = `SELECT * FROM ${table} ORDER BY id DESC LIMIT ${REFRESH_ROWS_LIMIT}`;
+        let args = [];
+        if (lastId > 0) {
+          query = `SELECT * FROM ${table} WHERE id > ? ORDER BY id ASC LIMIT 200`;
+          args = [lastId];
+        }
+
+        const resTurso = await tursoQuery(query, args);
+        if (resTurso && resTurso.rows && resTurso.rows.length > 0) {
+          const incoming = lastId > 0 ? resTurso.rows : resTurso.rows.reverse();
+          const existingTimestamps = new Set(dataRows.map(r => r["Time_Stamp"]));
+          const freshRows = incoming.filter(r => r["Time_Stamp"] && !existingTimestamps.has(r["Time_Stamp"]));
+
+          if (freshRows.length > 0) {
+            dataRows = dataRows.concat(freshRows);
+            availableDates = getAvailableDates(dataRows);
+            if (selectedDate !== "all" && !availableDates.includes(selectedDate)) {
+              selectedDate = availableDates[0] || "all";
+            }
+            updateDateFilterOptions();
+            console.log(`[Dashboard] Refresco incremental Turso: +${freshRows.length} nuevas lecturas.`);
+          }
+
+          renderTimeline();
+          if (document.body.classList.contains("tv-mode")) renderCards();
+          evaluateRealtimeAlerts(dataRows);
+          document.getElementById("lastUpdated").textContent = "Actualizado (Turso): " + new Date().toLocaleString();
+          refreshed = true;
+        }
+      } catch (errTurso) {
+        console.warn("[Dashboard] Error refrescando desde Turso:", errTurso);
+      }
+    }
+
+    // Refresco con Firebase si Turso no está activo o falló
+    if (!refreshed) {
+      if (ds.baseUrl && dataRows && dataRows.length > 0) {
+        try {
+          const res = await fetch(`${ds.baseUrl}/rows.json?orderBy="$key"&limitToLast=${REFRESH_ROWS_LIMIT}`);
+          if (res.ok) {
+            const raw = await res.json();
+            if (raw) {
+              const incoming = Array.isArray(raw) ? raw : Object.values(raw);
+              const existingTimestamps = new Set(dataRows.map((r) => r["Time_Stamp"]));
+              const freshRows = incoming.filter((r) => r["Time_Stamp"] && !existingTimestamps.has(r["Time_Stamp"]));
+
+              if (freshRows.length > 0) {
+                dataRows = dataRows.concat(freshRows);
+                availableDates = getAvailableDates(dataRows);
+                if (selectedDate !== "all" && !availableDates.includes(selectedDate)) {
+                  selectedDate = availableDates[0] || "all";
+                }
+                updateDateFilterOptions();
+                console.log(`[Dashboard] Refresco incremental Firebase: +${freshRows.length} lecturas.`);
+              }
+
+              renderTimeline();
+              if (document.body.classList.contains("tv-mode")) renderCards();
+              evaluateRealtimeAlerts(dataRows);
+              document.getElementById("lastUpdated").textContent = "Actualizado (Firebase): " + new Date().toLocaleString();
+              refreshed = true;
+            }
+          }
+        } catch (errInc) {
+          console.warn("[Dashboard] Refresco incremental no disponible, usando fallback:", errInc);
+        }
+      }
+
+      if (!refreshed) {
+        const res = await fetch(ds.url + "?t=" + Date.now(), { cache: "no-store" });
+        const json = await res.json();
+        dataRows = json.rows || [];
+        availableDates = getAvailableDates(dataRows);
+        if (selectedDate !== "all" && !availableDates.includes(selectedDate)) {
+          selectedDate = availableDates[0] || "all";
+        }
+        updateDateFilterOptions();
+        renderTimeline();
+        if (document.body.classList.contains("tv-mode")) renderCards();
+        evaluateRealtimeAlerts(dataRows);
+        document.getElementById("lastUpdated").textContent = "Actualizado (Firebase): " + new Date().toLocaleString();
+      }
+    }
+  } catch (e) {
+    console.error("Error refrescando timeline:", e);
+  } finally {
+    isRefreshing = false;
+  }
 }
 
 /* ===============================
@@ -1176,7 +1625,30 @@ document.addEventListener("DOMContentLoaded", () => {
   document.getElementById("quickRange").onchange = renderAll;
   document.getElementById("heatmapQuick").onchange = renderHeatmap;
   document.getElementById("timelineRange").onchange = renderTimeline;
-  document.getElementById("dateFilter").onchange = (e) => { selectedDate = e.target.value || "all"; renderAll(); };
+  document.getElementById("dateFilter").onchange = async (e) => {
+    if (e.target.value === "__load_all__") {
+      await loadFullHistory();
+      return;
+    }
+    selectedDate = e.target.value || "all";
+    renderAll();
+  };
+  
+  const btnFullHistory = document.getElementById("btnLoadFullHistory");
+  if (btnFullHistory) {
+    btnFullHistory.onclick = loadFullHistory;
+  }
+
+  const btnBackend = document.getElementById("btnBackendSwitch");
+  if (btnBackend) {
+    btnBackend.onclick = () => {
+      activeBackend = activeBackend === "turso" ? "firebase" : "turso";
+      localStorage.setItem("ds_backend", activeBackend);
+      updateBackendButtonState();
+      loadDataset(currentDataset, { resetSelections: true });
+    };
+  }
+
   document.getElementById("btnTvMode").onclick = enterTvMode;
 
   document.querySelectorAll(".ds-btn").forEach((btn) => {
@@ -1184,6 +1656,7 @@ document.addEventListener("DOMContentLoaded", () => {
       const key = btn.dataset.dataset; if (!key || key === currentDataset) return;
       document.querySelectorAll(".ds-btn").forEach((b) => b.classList.toggle("active", b === btn));
       selectedHeatmap.clear(); selectedTimeline.clear(); selectedDate = "all";
+      hasFullHistory = false;
       loadDataset(key, { resetSelections: true });
     });
   });
@@ -1350,6 +1823,16 @@ document.addEventListener("DOMContentLoaded", () => {
       }
     };
   }
+
+  // Refrescar al reenfocar la pestaña si estuvo oculta más de 2 minutos
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden) {
+      const elapsed = Date.now() - lastRefreshTime;
+      if (elapsed >= 2 * 60 * 1000) {
+        refreshTimeline();
+      }
+    }
+  });
 
   setInterval(refreshTimeline, 5 * 60 * 1000);
 });
