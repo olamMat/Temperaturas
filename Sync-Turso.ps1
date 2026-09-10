@@ -77,7 +77,7 @@ function Get-TursoUltimoTimestamp {
         $reqs = @(
             @{
                 type = "execute"
-                stmt = @{ sql = "SELECT Time_Stamp FROM $Tabla ORDER BY Time_Stamp DESC LIMIT 1" }
+                stmt = @{ sql = "SELECT Time_Stamp FROM $Tabla ORDER BY id DESC LIMIT 1" }
             },
             @{ type = "close" }
         )

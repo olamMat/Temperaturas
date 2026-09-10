@@ -91,10 +91,93 @@ document.addEventListener("click", (e) => {
 /* ===============================
    UTILIDADES
 ================================*/
-function parseDotNetDate(str) {
+function parseDateSmart(str) {
   if (!str) return null;
-  const m = /\/Date\((\d+)\)\//.exec(str);
-  return m ? new Date(Number(m[1])) : null;
+  if (str instanceof Date) return isNaN(str.getTime()) ? null : str;
+  if (typeof str === "number") return new Date(str);
+
+  // 1. Formato .NET JSON: /Date(1789056275000)/ o con timezone
+  if (typeof str === "string") {
+    const mDotNet = /\/Date\((-?\d+)(?:[+-]\d+)?\)\//.exec(str);
+    if (mDotNet) {
+      const d = new Date(Number(mDotNet[1]));
+      return isNaN(d.getTime()) ? null : d;
+    }
+  }
+
+  const s = String(str).trim();
+
+  // 2. Si es string numérico puro (ms)
+  if (/^\d{11,14}$/.test(s)) {
+    const d = new Date(Number(s));
+    if (!isNaN(d.getTime())) return d;
+  }
+
+  // 3. Formato YYYY-MM-DD HH:mm:ss o ISO
+  const m = /^(\d{4})[-/](\d{1,2})[-/](\d{1,2})(?:[ T](\d{1,2}):(\d{1,2})(?::(\d{1,2}))?)?/.exec(s);
+  if (m) {
+    let y = parseInt(m[1], 10);
+    let p1 = parseInt(m[2], 10);
+    let p2 = parseInt(m[3], 10);
+    let hh = m[4] != null ? parseInt(m[4], 10) : 0;
+    let mm = m[5] != null ? parseInt(m[5], 10) : 0;
+    let ss = m[6] != null ? parseInt(m[6], 10) : 0;
+
+    let month = p1;
+    let day = p2;
+
+    // Corrección si viene en formato YYYY-DD-MM (donde p1 es día y p2 es mes)
+    if (p1 > 12 && p2 <= 12) {
+      day = p1;
+      month = p2;
+    } else if (p1 <= 12 && p2 <= 12) {
+      // Si ambos <= 12, comprobar si con (p1=mes, p2=dia) la fecha queda en el futuro
+      const testD1 = new Date(y, p1 - 1, p2, hh, mm, ss);
+      const testD2 = new Date(y, p2 - 1, p1, hh, mm, ss);
+      const now = new Date();
+      const maxFuture = now.getTime() + 24 * 3600 * 1000;
+      if (testD1.getTime() > maxFuture && testD2.getTime() <= maxFuture) {
+        month = p2;
+        day = p1;
+      }
+    }
+
+    const d = new Date(y, month - 1, day, hh, mm, ss);
+    return isNaN(d.getTime()) ? null : d;
+  }
+
+  const parsed = new Date(s);
+  return isNaN(parsed.getTime()) ? null : parsed;
+}
+
+// Alias para total compatibilidad con todas las funciones del dashboard
+function parseDotNetDate(str) {
+  return parseDateSmart(str);
+}
+
+function deduplicateRows(rows) {
+  if (!rows || rows.length <= 1) return rows || [];
+  const result = [];
+  const seenKeys = new Set();
+
+  for (const r of rows) {
+    const d = parseDateSmart(r["Time_Stamp"]);
+    if (!d) continue;
+
+    // Detectar sensores
+    const s1 = r["Secadora 1"] ?? r["Vertical 1"] ?? r["Secadora Vertical 1"] ?? "";
+    const s2 = r["Secadora 2"] ?? r["Vertical 2"] ?? r["Secadora Vertical 2"] ?? "";
+    const s3 = r["Secadora 3"] ?? r["Vertical 3"] ?? r["Secadora Vertical 3"] ?? "";
+
+    // Clave de tiempo al minuto para filtrar duplicados UTC/Local
+    const minTime = Math.floor(d.getTime() / 60000);
+    const key = `${minTime}_${s1}_${s2}_${s3}`;
+
+    if (seenKeys.has(key)) continue;
+    seenKeys.add(key);
+    result.push(r);
+  }
+  return result;
 }
 function fmt(v) {
   return v == null || isNaN(v) ? "—" : Number(v).toFixed(2);
@@ -953,19 +1036,21 @@ function renderAll() {
 }
 
 function applyDatasetData(json, { resetSelections = true } = {}) {
-  if (!json) {
-    console.warn("No hay datos todavía. Firebase devolvió null.");
-    document.getElementById("datasetTitle").textContent = "Sin datos en Firebase";
+  const backendLabel = activeBackend === "turso" ? "Turso" : "Firebase";
+  if (!json || !json.rows || !json.rows.length) {
+    console.warn(`No hay datos todavía en ${backendLabel}.`);
+    document.getElementById("datasetTitle").textContent = `Sin datos en ${backendLabel}`;
     return;
   }
   
   dataColumns = json.columns || [];
   // Ordenar cronológicamente para que gráficos y líneas de tiempo fluyan del pasado al presente
-  dataRows = (json.rows || []).slice().sort((a, b) => {
-    const tsA = parseDotNetDate(a["Time_Stamp"])?.getTime() || 0;
-    const tsB = parseDotNetDate(b["Time_Stamp"])?.getTime() || 0;
+  const sorted = (json.rows || []).slice().sort((a, b) => {
+    const tsA = parseDateSmart(a["Time_Stamp"])?.getTime() || 0;
+    const tsB = parseDateSmart(b["Time_Stamp"])?.getTime() || 0;
     return tsA - tsB;
   });
+  dataRows = deduplicateRows(sorted);
   secadoras = dataColumns.filter((c) => { const l = c.toLowerCase(); return l.includes("secadora") || l.includes("vertical"); });
   availableDates = getAvailableDates(dataRows);
   if (selectedDate !== "all" && !availableDates.includes(selectedDate)) { selectedDate = availableDates[0] || "all"; }
@@ -976,7 +1061,7 @@ function applyDatasetData(json, { resetSelections = true } = {}) {
   buildHeatmapCheckboxes(); buildTimelineCheckboxes(); buildHornosControls();
   
   initComparativeView();
-  document.getElementById("lastUpdated").textContent = "Actualizado: " + new Date().toLocaleString();
+  document.getElementById("lastUpdated").textContent = `Actualizado (${backendLabel}): ` + new Date().toLocaleString();
   document.getElementById("datasetTitle").textContent = DATASETS[currentDataset]?.label || "Secadoras";
   renderAll();
   evaluateRealtimeAlerts(dataRows);
@@ -1393,15 +1478,16 @@ async function loadFullHistory() {
   try {
     if (activeBackend === "turso") {
       const table = TURSO_CONFIG.tables[currentDataset];
-      const resTurso = await tursoQuery(`SELECT * FROM ${table} ORDER BY Time_Stamp ASC`);
+      const resTurso = await tursoQuery(`SELECT * FROM ${table} ORDER BY id ASC`);
       if (resTurso && resTurso.rows && resTurso.rows.length > 0) {
         hasFullHistory = true;
         dataColumns = resTurso.columns.filter(c => c !== "id");
-        dataRows = resTurso.rows.slice().sort((a, b) => {
-          const tsA = parseDotNetDate(a["Time_Stamp"])?.getTime() || 0;
-          const tsB = parseDotNetDate(b["Time_Stamp"])?.getTime() || 0;
+        const sorted = resTurso.rows.slice().sort((a, b) => {
+          const tsA = parseDateSmart(a["Time_Stamp"])?.getTime() || 0;
+          const tsB = parseDateSmart(b["Time_Stamp"])?.getTime() || 0;
           return tsA - tsB;
         });
+        dataRows = deduplicateRows(sorted);
         availableDates = getAvailableDates(dataRows);
         updateDateFilterOptions();
         renderAll();
@@ -1419,7 +1505,12 @@ async function loadFullHistory() {
     if (json && json.rows) {
       hasFullHistory = true;
       dataColumns = json.columns || dataColumns;
-      dataRows = json.rows || [];
+      const sorted = (json.rows || []).slice().sort((a, b) => {
+        const tsA = parseDateSmart(a["Time_Stamp"])?.getTime() || 0;
+        const tsB = parseDateSmart(b["Time_Stamp"])?.getTime() || 0;
+        return tsA - tsB;
+      });
+      dataRows = deduplicateRows(sorted);
       availableDates = getAvailableDates(dataRows);
       updateDateFilterOptions();
       renderAll();
@@ -1456,16 +1547,22 @@ async function loadDataset(key, { resetSelections = true, forceFull = false } = 
       try {
         await ensureTursoTables();
         const table = TURSO_CONFIG.tables[key];
-        const limit = forceFull ? 50000 : FAST_LOAD_ROWS_LIMIT;
-        const resTurso = await tursoQuery(`SELECT * FROM ${table} ORDER BY Time_Stamp DESC LIMIT ${limit}`);
+        const limit = forceFull ? 60000 : FAST_LOAD_ROWS_LIMIT;
+        // Obtenemos las filas más recientes ordenadas por id DESC
+        const resTurso = await tursoQuery(`SELECT * FROM ${table} ORDER BY id DESC LIMIT ${limit}`);
         
         if (resTurso && resTurso.rows && resTurso.rows.length > 0) {
-          const rowsRev = resTurso.rows.reverse();
           const cleanCols = resTurso.columns.filter(c => c !== "id");
-          json = { columns: cleanCols, rows: rowsRev };
-          console.log(`[Dashboard] Datos cargados desde Turso: ${rowsRev.length} registros.`);
+          const sorted = resTurso.rows.slice().sort((a, b) => {
+            const tsA = parseDateSmart(a["Time_Stamp"])?.getTime() || 0;
+            const tsB = parseDateSmart(b["Time_Stamp"])?.getTime() || 0;
+            return tsA - tsB;
+          });
+          const dedup = deduplicateRows(sorted);
+          json = { columns: cleanCols, rows: dedup };
+          console.log(`[Dashboard] Datos cargados desde Turso: ${dedup.length} registros ordenados.`);
         } else {
-          console.warn("[Dashboard] Turso está vacío para este dataset. Usando fallback de Firebase.");
+          console.warn("[Dashboard] Turso no devolvió filas. Intentando con Firebase...");
         }
       } catch (errTurso) {
         console.warn("[Dashboard] Error consultando Turso, usando fallback Firebase:", errTurso);
@@ -1478,7 +1575,8 @@ async function loadDataset(key, { resetSelections = true, forceFull = false } = 
         try {
           const [colsRes, rowsRes] = await Promise.all([
             fetch(`${ds.baseUrl}/columns.json`),
-            fetch(`${ds.baseUrl}/rows.json?orderBy="$key"&limitToLast=${FAST_LOAD_ROWS_LIMIT}`)
+            // En Firebase RTDB las claves más recientes son 0, 1, 2... (usar limitToFirst)
+            fetch(`${ds.baseUrl}/rows.json?orderBy="$key"&limitToFirst=${FAST_LOAD_ROWS_LIMIT}`)
           ]);
 
           if (colsRes.ok && rowsRes.ok) {
@@ -1529,26 +1627,29 @@ async function refreshTimeline() {
     if (activeBackend === "turso") {
       try {
         const table = TURSO_CONFIG.tables[currentDataset];
-        let lastTsStr = "";
-        if (dataRows.length > 0) {
-          lastTsStr = dataRows[dataRows.length - 1]["Time_Stamp"] || "";
-        }
-
-        let query = `SELECT * FROM ${table} ORDER BY Time_Stamp DESC LIMIT ${REFRESH_ROWS_LIMIT}`;
-        let args = [];
-        if (lastTsStr) {
-          query = `SELECT * FROM ${table} WHERE Time_Stamp > ? ORDER BY Time_Stamp ASC LIMIT 200`;
-          args = [lastTsStr];
-        }
-
-        const resTurso = await tursoQuery(query, args);
+        const resTurso = await tursoQuery(`SELECT * FROM ${table} ORDER BY id DESC LIMIT ${REFRESH_ROWS_LIMIT}`);
         if (resTurso && resTurso.rows && resTurso.rows.length > 0) {
-          const incoming = lastTsStr ? resTurso.rows : resTurso.rows.reverse();
-          const existingTimestamps = new Set(dataRows.map(r => r["Time_Stamp"]));
-          const freshRows = incoming.filter(r => r["Time_Stamp"] && !existingTimestamps.has(r["Time_Stamp"]));
+          const existingTimestamps = new Set(dataRows.map(r => {
+            const d = parseDateSmart(r["Time_Stamp"]);
+            return d ? d.getTime() : null;
+          }).filter(Boolean));
+
+          const freshRows = [];
+          for (const r of resTurso.rows) {
+            const d = parseDateSmart(r["Time_Stamp"]);
+            if (d && !existingTimestamps.has(d.getTime())) {
+              existingTimestamps.add(d.getTime());
+              freshRows.push(r);
+            }
+          }
 
           if (freshRows.length > 0) {
-            dataRows = dataRows.concat(freshRows);
+            const merged = dataRows.concat(freshRows).sort((a, b) => {
+              const tsA = parseDateSmart(a["Time_Stamp"])?.getTime() || 0;
+              const tsB = parseDateSmart(b["Time_Stamp"])?.getTime() || 0;
+              return tsA - tsB;
+            });
+            dataRows = deduplicateRows(merged);
             availableDates = getAvailableDates(dataRows);
             if (selectedDate !== "all" && !availableDates.includes(selectedDate)) {
               selectedDate = availableDates[0] || "all";
@@ -1572,16 +1673,27 @@ async function refreshTimeline() {
     if (!refreshed) {
       if (ds.baseUrl && dataRows && dataRows.length > 0) {
         try {
-          const res = await fetch(`${ds.baseUrl}/rows.json?orderBy="$key"&limitToLast=${REFRESH_ROWS_LIMIT}`);
+          const res = await fetch(`${ds.baseUrl}/rows.json?orderBy="$key"&limitToFirst=${REFRESH_ROWS_LIMIT}`);
           if (res.ok) {
             const raw = await res.json();
             if (raw) {
               const incoming = Array.isArray(raw) ? raw : Object.values(raw);
-              const existingTimestamps = new Set(dataRows.map((r) => r["Time_Stamp"]));
-              const freshRows = incoming.filter((r) => r["Time_Stamp"] && !existingTimestamps.has(r["Time_Stamp"]));
+              const existingTimestamps = new Set(dataRows.map((r) => {
+                const d = parseDateSmart(r["Time_Stamp"]);
+                return d ? d.getTime() : null;
+              }).filter(Boolean));
+              const freshRows = incoming.filter((r) => {
+                const d = parseDateSmart(r["Time_Stamp"]);
+                return d && !existingTimestamps.has(d.getTime());
+              });
 
               if (freshRows.length > 0) {
-                dataRows = dataRows.concat(freshRows);
+                const merged = dataRows.concat(freshRows).sort((a, b) => {
+                  const tsA = parseDateSmart(a["Time_Stamp"])?.getTime() || 0;
+                  const tsB = parseDateSmart(b["Time_Stamp"])?.getTime() || 0;
+                  return tsA - tsB;
+                });
+                dataRows = deduplicateRows(merged);
                 availableDates = getAvailableDates(dataRows);
                 if (selectedDate !== "all" && !availableDates.includes(selectedDate)) {
                   selectedDate = availableDates[0] || "all";
@@ -1605,7 +1717,13 @@ async function refreshTimeline() {
       if (!refreshed) {
         const res = await fetch(ds.url + "?t=" + Date.now(), { cache: "no-store" });
         const json = await res.json();
-        dataRows = json.rows || [];
+        const incoming = json.rows || [];
+        const sorted = incoming.slice().sort((a, b) => {
+          const tsA = parseDateSmart(a["Time_Stamp"])?.getTime() || 0;
+          const tsB = parseDateSmart(b["Time_Stamp"])?.getTime() || 0;
+          return tsA - tsB;
+        });
+        dataRows = deduplicateRows(sorted);
         availableDates = getAvailableDates(dataRows);
         if (selectedDate !== "all" && !availableDates.includes(selectedDate)) {
           selectedDate = availableDates[0] || "all";
